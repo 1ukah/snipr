@@ -1,0 +1,14 @@
+[package]
+name = "snipr-llm"
+version.workspace = true
+edition.workspace = true
+description = "Provedores de modelo (Anthropic, OpenAI-compatível) atrás de uma interface única"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true

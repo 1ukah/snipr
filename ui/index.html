@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snipr</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="rail">
+    <div class="brand">
+      <span class="reticle" aria-hidden="true"></span>
+      <span class="wordmark">SNIPR</span>
+    </div>
+    <nav>
+      <button class="nav on" data-view="search"><span class="k">01</span>Busca</button>
+      <button class="nav" data-view="accounts"><span class="k">02</span>Contas</button>
+      <button class="nav" data-view="settings"><span class="k">03</span>Ajustes</button>
+    </nav>
+    <div class="rail-foot">
+      <div class="eyebrow">Motor</div>
+      <div id="engine-label" class="mono small">—</div>
+    </div>
+  </aside>
+
+  <main>
+    <!-- BUSCA -->
+    <section class="view on" id="view-search">
+      <form id="search-form" class="ticket" autocomplete="off">
+        <div class="ticket-head">
+          <label class="eyebrow" for="q">Alvo</label>
+          <span id="job-status" class="mono small muted"></span>
+        </div>
+        <div class="query-row">
+          <input id="q" class="query" placeholder="ex.: cadeira DT3 N10 XL" required>
+          <button id="go" class="btn-fire" type="submit">Caçar</button>
+        </div>
+        <div class="controls">
+          <div class="seg" data-name="condition">
+            <button type="button" data-v="any" class="on">Novo + usado</button>
+            <button type="button" data-v="new">Só novo</button>
+            <button type="button" data-v="used">Só usado</button>
+          </div>
+          <div class="seg" data-name="mode" title="Multi = um agente por site, em paralelo">
+            <button type="button" data-v="single" class="on">1 agente</button>
+            <button type="button" data-v="multi">Multi-agente</button>
+          </div>
+          <label class="field-inline">até R$
+            <input id="max-price" type="number" min="0" step="1" placeholder="—">
+          </label>
+          <input id="notes" class="notes" placeholder="detalhes (opcional): cor, região, versão…">
+        </div>
+        <div id="site-chips" class="chips"></div>
+      </form>
+
+      <div class="board">
+        <div class="results">
+          <div class="stubs">
+            <div class="stub" id="best-new">
+              <div class="eyebrow">Menor novo</div>
+              <div class="stub-price mono">—</div>
+              <div class="stub-meta small muted"></div>
+            </div>
+            <div class="stub" id="best-used">
+              <div class="eyebrow">Menor usado</div>
+              <div class="stub-price mono">—</div>
+              <div class="stub-meta small muted"></div>
+            </div>
+          </div>
+          <div class="tabs">
+            <button class="tab on" data-f="all">Todos <span class="n">0</span></button>
+            <button class="tab" data-f="new">Novos <span class="n">0</span></button>
+            <button class="tab" data-f="used">Usados <span class="n">0</span></button>
+          </div>
+          <ol id="list" class="receipt"></ol>
+          <div id="empty" class="empty">
+            <p class="mono">Nenhum anúncio ainda.</p>
+            <p class="small muted">Digite o produto, escolha os sites e clique em <b>Caçar</b>. Os resultados aparecem aqui conforme os agentes encontram.</p>
+          </div>
+        </div>
+
+        <aside class="activity">
+          <div class="eyebrow">Agentes</div>
+          <div id="human"></div>
+          <div id="agents" class="agents"></div>
+          <div class="eyebrow log-head">Registro</div>
+          <ol id="log" class="log mono"></ol>
+        </aside>
+      </div>
+    </section>
+
+    <!-- CONTAS -->
+    <section class="view" id="view-accounts">
+      <header class="page-head">
+        <h1>Contas</h1>
+        <p class="muted">Sites como o Facebook Marketplace só mostram resultados com login. Entre <b>uma vez</b> na janela do navegador do Snipr e a sessão fica salva no perfil local.</p>
+      </header>
+      <div id="login-banner" class="banner" hidden>
+        <div>
+          <div class="eyebrow">Janela aberta</div>
+          <p id="login-text"></p>
+        </div>
+        <button id="login-done" class="btn">Concluí</button>
+      </div>
+      <div id="site-logins" class="rows"></div>
+
+      <header class="page-head sub">
+        <h2>Cofre de credenciais</h2>
+        <p class="muted">Opcional. Permite que o agente refaça o login sozinho quando a sessão expirar. A senha vai para o cofre do sistema operacional e nunca é mostrada, nem para você nem para a IA: o agente só pode mandar digitá-la no próprio domínio.</p>
+      </header>
+      <form id="cred-form" class="cred-form" autocomplete="off">
+        <input name="domain" placeholder="domínio (ex.: facebook.com)" required>
+        <input name="username" placeholder="usuário / e-mail" required autocomplete="off">
+        <input name="password" type="password" placeholder="senha" required autocomplete="new-password">
+        <button class="btn" type="submit">Guardar</button>
+      </form>
+      <div id="cred-list" class="rows"></div>
+    </section>
+
+    <!-- AJUSTES -->
+    <section class="view" id="view-settings">
+      <header class="page-head">
+        <h1>Ajustes</h1>
+      </header>
+      <form id="settings-form" class="settings" autocomplete="off">
+        <fieldset>
+          <legend>Inteligência</legend>
+          <label>Provedor
+            <select name="provider">
+              <option value="claude_code">Claude Code (assinatura / OAuth)</option>
+              <option value="anthropic">Anthropic API (API key)</option>
+              <option value="openai_compat">Compatível com OpenAI (OpenAI, Grok, Gemini, OpenRouter, Ollama)</option>
+            </select>
+          </label>
+          <label class="for-openai">Endpoint
+            <div class="pair">
+              <select id="base-preset">
+                <option value="">personalizado</option>
+                <option value="https://api.openai.com/v1">OpenAI</option>
+                <option value="https://api.x.ai/v1">xAI (Grok)</option>
+                <option value="https://generativelanguage.googleapis.com/v1beta/openai">Google Gemini</option>
+                <option value="https://openrouter.ai/api/v1">OpenRouter</option>
+                <option value="http://localhost:11434/v1">Ollama (local)</option>
+              </select>
+              <input name="openai_base_url" placeholder="https://…/v1">
+            </div>
+          </label>
+          <label>Modelo
+            <input name="model" id="model-input">
+          </label>
+          <label>Esforço de raciocínio
+            <select name="effort">
+              <option value="">padrão do modelo</option>
+              <option value="low">baixo (mais rápido e barato)</option>
+              <option value="medium">médio</option>
+              <option value="high">alto</option>
+              <option value="xhigh">muito alto</option>
+            </select>
+          </label>
+
+          <div class="secret for-claude_code" data-name="claude_code_oauth_token">
+            <span class="label">Token OAuth do Claude Code</span>
+            <div class="secret-row">
+              <input type="password" spellcheck="false" autocomplete="off">
+              <span class="secret-state mono small"></span>
+              <button type="button" class="link" data-act="del">remover</button>
+            </div>
+            <p class="hint">Gere com <code>claude setup-token</code> e cole aqui. Opcional: se ficar vazio, o Snipr usa o login que o Claude Code já tem nesta máquina.</p>
+          </div>
+          <div class="secret for-anthropic" data-name="anthropic_api_key">
+            <span class="label">API key da Anthropic</span>
+            <div class="secret-row">
+              <input type="password" spellcheck="false" autocomplete="off">
+              <span class="secret-state mono small"></span>
+              <button type="button" class="link" data-act="del">remover</button>
+            </div>
+          </div>
+          <div class="secret for-openai_compat" data-name="openai_api_key">
+            <span class="label">API key do provedor</span>
+            <div class="secret-row">
+              <input type="password" spellcheck="false" autocomplete="off">
+              <span class="secret-state mono small"></span>
+              <button type="button" class="link" data-act="del">remover</button>
+            </div>
+            <p class="hint">Deixe vazio para provedores locais (Ollama).</p>
+          </div>
+          <p class="hint">Chaves coladas vão direto para o cofre do sistema e somem do campo. Dá para trocar ou remover, nunca para ver de novo.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Navegador</legend>
+          <label>Modo
+            <select name="browser_mode">
+              <option value="hidden">Oculto: Chrome real fora da tela (recomendado)</option>
+              <option value="headless">Headless: um pouco mais leve, mais detectável</option>
+              <option value="visible">Visível: para acompanhar os agentes</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" name="block_media"> Bloquear imagens, fontes e vídeos (economiza RAM e banda)</label>
+          <label class="check"><input type="checkbox" name="low_memory"> Modo de pouca memória (menos processos do Chrome)</label>
+          <div class="grid3">
+            <label>Agentes em paralelo
+              <input type="number" name="max_parallel" min="1" max="8">
+            </label>
+            <label>Passos por agente
+              <input type="number" name="max_steps" min="5" max="200">
+            </label>
+            <label>Fechar Chrome ocioso após (s)
+              <input type="number" name="idle_close_secs" min="0">
+            </label>
+          </div>
+          <label><span>Caminho do Chrome <span class="muted">(vazio = detectar)</span></span>
+            <input name="chrome_path" spellcheck="false">
+          </label>
+          <label><span>Caminho do Claude Code <span class="muted">(vazio = detectar)</span></span>
+            <input name="claude_path" spellcheck="false">
+          </label>
+        </fieldset>
+        <div class="save-row">
+          <span id="save-msg" class="mono small muted"></span>
+          <button class="btn" type="submit">Salvar ajustes</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

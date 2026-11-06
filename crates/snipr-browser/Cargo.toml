@@ -1,0 +1,22 @@
+[package]
+name = "snipr-browser"
+version.workspace = true
+edition.workspace = true
+description = "Cliente CDP enxuto e furtivo para controlar o Chrome real"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+futures-util.workspace = true
+tokio-tungstenite.workspace = true
+rand.workspace = true
+which.workspace = true
+parking_lot.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
