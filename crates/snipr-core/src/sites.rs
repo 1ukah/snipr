@@ -3,14 +3,19 @@
 //! Qualquer site pode ser adicionado nos ajustes (`custom_sites`).
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export)]
 pub struct Site {
     pub id: String,
     pub name: String,
     pub domain: String,
     /// Placeholders: {q} (url-encoded), {q_plus} (espaços como +), {q_dash} (slug com hífens)
+    #[serde(default)]
     pub search_url: String,
+    #[serde(default)]
+    pub home_url: String,
     #[serde(default)]
     pub login_url: Option<String>,
     #[serde(default)]
@@ -20,6 +25,18 @@ pub struct Site {
     pub sells: String,
     #[serde(default)]
     pub tips: String,
+    #[serde(default)]
+    pub custom: bool,
+    #[serde(default)]
+    pub manual: bool,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
+pub struct Suggestion {
+    pub name: String,
+    pub url: String,
+    pub domain: String,
 }
 
 impl Site {
@@ -34,6 +51,14 @@ impl Site {
             .collect::<Vec<_>>()
             .join("-");
         self.search_url.replace("{q}", &enc).replace("{q_plus}", &plus).replace("{q_dash}", &dash)
+    }
+
+    pub fn home(&self) -> String {
+        if self.home_url.is_empty() {
+            format!("https://www.{}/", self.domain.trim_start_matches("www."))
+        } else {
+            self.home_url.clone()
+        }
     }
 
     pub fn matches_host(&self, host: &str) -> bool {
@@ -62,6 +87,9 @@ fn site(
         requires_login,
         sells: sells.into(),
         tips: tips.into(),
+        home_url: String::new(),
+        custom: false,
+        manual: false,
     }
 }
 
@@ -127,8 +155,48 @@ pub fn default_sites() -> Vec<Site> {
 }
 
 pub fn default_enabled() -> Vec<String> {
-    ["mercadolivre", "olx", "amazon", "kabum", "terabyte", "pichau", "enjoei"]
+    ["mercadolivre", "amazon", "kabum", "terabyte", "pichau", "magalu"]
         .into_iter()
         .map(String::from)
         .collect()
+}
+
+pub fn suggestions() -> Vec<Suggestion> {
+    [
+        ("Americanas", "https://www.americanas.com.br/"),
+        ("Casas Bahia", "https://www.casasbahia.com.br/"),
+        ("Ponto", "https://www.pontofrio.com.br/"),
+        ("Extra", "https://www.extra.com.br/"),
+        ("Carrefour", "https://www.carrefour.com.br/"),
+        ("AliExpress", "https://pt.aliexpress.com/"),
+        ("Pernambucanas", "https://www.pernambucanas.com.br/"),
+        ("Fast Shop", "https://site.fastshop.com.br/"),
+        ("Kalunga", "https://www.kalunga.com.br/"),
+        ("Chipart", "https://www.chipart.com.br/"),
+        ("Logitech Store", "https://www.logitechstore.com.br/"),
+        ("HP Store", "https://www.hp.com/br-pt/shop/"),
+        ("Motorola", "https://www.motorola.com.br/"),
+        ("LG", "https://www.lg.com/br/"),
+        ("Samsung", "https://www.samsung.com/br/"),
+        ("Apple Store", "https://www.apple.com/br/store"),
+        ("Dell", "https://www.dell.com/pt-br"),
+        ("Lenovo", "https://www.lenovo.com/br/pt/"),
+        ("Acer Store", "https://br-store.acer.com/"),
+        ("ASUS Store", "https://www.asus.com/br/store/"),
+        ("Avell", "https://avell.com.br/"),
+    ]
+    .into_iter()
+    .map(|(name, url)| Suggestion { name: name.into(), url: url.into(), domain: display_domain(url) })
+    .collect()
+}
+
+pub fn display_domain(url: &str) -> String {
+    let s = url.trim().trim_start_matches("https://").trim_start_matches("http://");
+    let s = s.trim_start_matches("www.");
+    s.split(['?', '#']).next().unwrap_or_default().trim_end_matches('/').to_string()
+}
+
+pub fn site_id_for(domain: &str) -> String {
+    let id: String = domain.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
+    format!("x-{}", id.trim_matches('-'))
 }

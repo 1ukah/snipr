@@ -48,11 +48,13 @@ impl AnthropicSession {
             "model": self.cfg.model,
             "max_tokens": 16000,
             "system": [{ "type": "text", "text": self.system, "cache_control": { "type": "ephemeral" } }],
-            "tools": self.tools,
             "messages": self.messages,
             // Cache automático do histórico que cresce a cada passo.
             "cache_control": { "type": "ephemeral" },
         });
+        if !self.tools.is_empty() {
+            body["tools"] = json!(self.tools);
+        }
         if let Some(e) = self.cfg.effort.as_deref().filter(|e| !e.is_empty()) {
             body["output_config"] = json!({ "effort": e });
         }
@@ -151,4 +153,22 @@ impl ChatSession for AnthropicSession {
         self.messages.push(json!({ "role": "user", "content": blocks }));
         self.request().await
     }
+}
+
+pub async fn list_models(api_key: &str, base_url: &str) -> Result<Vec<String>> {
+    let url = format!("{}/v1/models?limit=100", base_url.trim_end_matches('/'));
+    let r = http()
+        .get(&url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", API_VERSION)
+        .send()
+        .await
+        .map_err(|e| anyhow!("falha de rede com a API Anthropic: {e}"))?;
+    let status = r.status();
+    let text = r.text().await.unwrap_or_default();
+    if !status.is_success() {
+        bail!("API Anthropic respondeu {status}: {}", extract_error(&text));
+    }
+    let v: Value = serde_json::from_str(&text)?;
+    Ok(v["data"].as_array().into_iter().flatten().filter_map(|m| m["id"].as_str().map(String::from)).collect())
 }

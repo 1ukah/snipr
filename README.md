@@ -12,30 +12,42 @@ App nativo em Rust + Tauri (webview do sistema, sem Electron).
 **Pré-requisitos**
 
 - [Rust](https://rustup.rs) (stable)
+- [Node.js](https://nodejs.org) 22 ou mais recente (o build compila a interface em `ui/`)
 - Google Chrome (ou Edge/Chromium)
-- Para o provedor padrão, o [Claude Code](https://claude.com/claude-code) instalado
+- Para usar o login de uma conta de IA: o CLI do provedor instalado (veja abaixo)
 - Linux: dependências do Tauri (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`) e `libdbus-1-dev` para o cofre de segredos
 
 ```sh
 cargo run -p snipr-desktop --release
 ```
 
-Na primeira vez, abra **Ajustes** e configure o provedor de IA.
+O primeiro build roda `npm ci` e `npm run build` em `ui/` automaticamente. Para
+compilar só o Rust (por exemplo, no CI), use `SNIPR_SKIP_UI_BUILD=1`.
+
+Na primeira vez, abra **Ajustes** e configure a IA.
 
 ## Provedores de IA
 
-| Provedor | Autenticação |
-|---|---|
-| **Claude Code** (padrão) | Assinatura via OAuth: cole o token de `claude setup-token` nos Ajustes, ou deixe vazio para usar o login do `claude` da máquina |
-| **Anthropic API** | API key |
-| **Compatível com OpenAI** | API key + endpoint: OpenAI, xAI (Grok), Google Gemini, OpenRouter, Ollama local… |
+Três formas de conectar, em **Ajustes > IA**:
 
-No modo Claude Code, o Snipr executa o CLI oficial (`claude -p`) e entrega as
-ferramentas do navegador por um servidor **MCP** local (`127.0.0.1`, com
-token). As ferramentas embutidas do Claude Code (bash, arquivos) ficam
-desligadas.
+| Forma | Provedores | Como funciona |
+|---|---|---|
+| **Login** (padrão) | Anthropic, OpenAI, Google | Usa a conta já logada no CLI oficial: [Claude Code](https://claude.com/claude-code) (`claude`), [Codex](https://developers.openai.com/codex/cli) (`codex`) ou [Antigravity CLI](https://antigravity.google/docs/cli) (`agy`). O botão **Entrar** abre o login do CLI num terminal. |
+| **API key** | Anthropic, OpenAI, Google Gemini, xAI, OpenRouter, Ollama (local) e qualquer endpoint compatível com OpenAI | Chamadas HTTP diretas. A lista de modelos vem da API do provedor. |
+| **OAuth** | Anthropic | Token de `claude setup-token`, usado pelo Claude Code. |
 
-Os segredos (tokens, API keys, senhas de sites) ficam no cofre do sistema
+No modo Login e OAuth, o Snipr executa o CLI em modo não interativo e entrega
+as ferramentas do navegador por um servidor **MCP** local (`127.0.0.1`, com
+token). As ferramentas embutidas dos CLIs (shell, arquivos, web) ficam
+desligadas. Para o Antigravity CLI, o Snipr adiciona a regra `mcp(snipr/*)` em
+`~/.gemini/antigravity-cli/settings.json`: sem ela, o modo headless bloqueia as
+ferramentas do Snipr.
+
+Antes dos agentes, uma etapa de **planejamento** transforma a frase do usuário
+em um plano: produto, alternativas ("gigabyte ou msi"), requisitos, condição,
+preço máximo e termos de busca. O plano aparece na interface e guia os agentes.
+
+Os segredos (tokens e API keys) ficam no cofre do sistema
 (Credential Manager / Keychain / Secret Service). A interface só consegue
 gravar, trocar ou remover um segredo, nunca ler. Também dá para usar `.env`
 (veja `.env.example`).
@@ -46,10 +58,10 @@ gravar, trocar ou remover um segredo, nunca ler. Também dá para usar `.env`
 crates/
   snipr-browser   CDP próprio, Chrome real, isolated worlds, input humano, anti-desafio
   snipr-llm       ChatSession: Anthropic (HTTP), OpenAI-compatível
-  snipr-core      Engine (orquestrador), ferramentas, servidor MCP, sites, cofre, ajustes
+  snipr-core      Engine (orquestrador), planejamento, CLIs de IA, ferramentas, servidor MCP, lojas, cofre, ajustes
 apps/
   desktop         Tauri: ponte fina entre a UI e o Engine
-ui/               HTML/CSS/JS puro, sem build
+ui/               TypeScript + Vite, sem framework. Tipos gerados do Rust em ui/src/bindings
 ```
 
 **Integrações futuras** (Telegram, Discord, WhatsApp, API de SaaS) só precisam
@@ -80,20 +92,28 @@ thread, e nada nele depende da interface. `crates/snipr-core/examples/search.rs`
   Driver") e `--disable-site-isolation-trials` (o sensor do Akamai bloqueia)
   economizam RAM, mas denunciam a automação.
 
-### Logins
+### Logins nas lojas
 
-- **Contas → Entrar**: abre o site numa janela visível. Você faz login uma vez
+- **Contas > Entrar**: abre a loja numa janela visível. Você faz login uma vez
   (inclusive 2FA) e a sessão fica salva no perfil.
-- **Cofre de credenciais** (opcional): o agente pode refazer o login sozinho com
-  `type_secret`. Ele nunca vê a senha, e o Rust só digita a credencial no
-  domínio dono dela, o que protege contra *prompt injection* de páginas.
+- Se uma loja pedir login durante uma busca, o Snipr detecta a tela de login,
+  mostra a janela e pede para você entrar. O agente nunca digita senhas.
+- Lojas novas (em **Lojas > +**) passam por uma verificação: o Snipr abre a
+  página, detecta se ela requer login e procura o campo de busca.
+
+### Textos da interface
+
+A interface segue um português técnico simplificado, inspirado no ASD-STE100.
+Veja [docs/escrita.md](docs/escrita.md).
 
 ## Desenvolvimento
 
 ```sh
 cargo clippy --workspace          # lint
 cargo test --workspace            # testes rápidos
-cargo test -p snipr-core -- --ignored   # ponta a ponta: Chrome real + MCP (precisa de internet)
+cargo test -p snipr-core -- --ignored   # ponta a ponta: Chrome real + MCP + CLIs de IA (usa a IA)
+cargo test -p snipr-core export_bindings  # regenera os tipos TypeScript em ui/src/bindings
+npm --prefix ui run check               # checagem de tipos da interface
 ```
 
 Ferramentas de diagnóstico (sem IA, sem custo):
@@ -105,6 +125,7 @@ Ferramentas de diagnóstico (sem IA, sem custo):
 | `cargo run -p snipr-browser --example ram --release` | Mede a RAM do Chrome com 4 abas em paralelo (Windows) |
 | `cargo run -p snipr-browser --example webgl --release` | Mostra o que os sites enxergam do WebGL |
 | `cargo run -p snipr-core --example search -- "<produto>" site1,site2` | Busca completa pelo `Engine`, com o provedor e os segredos configurados (**usa a IA**) |
+| `cargo run -p snipr-core --example plan -- "<frase>" [login\|api_key\|oauth] [provedor]` | Mostra o plano de busca gerado pela IA, sem abrir o navegador (**usa a IA**) |
 
 Variáveis de ambiente para experimentos com o Chrome:
 

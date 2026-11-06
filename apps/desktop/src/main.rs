@@ -5,8 +5,8 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use snipr_core::{secrets, Engine, SearchEvent, SearchRequest, Settings, Site};
-use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use snipr_core::{secrets, CliStatus, Engine, Provider, SearchEvent, SearchRequest, Settings, Site, Suggestion, Theme};
+use tauri::{window::Color, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 struct AppState {
     engine: Arc<Engine>,
@@ -34,6 +34,26 @@ fn list_sites(state: State<'_, AppState>) -> Vec<Site> {
 }
 
 #[tauri::command]
+fn list_suggestions(state: State<'_, AppState>) -> Vec<Suggestion> {
+    state.engine.suggestions()
+}
+
+#[tauri::command]
+async fn add_site(state: State<'_, AppState>, url: String, name: Option<String>, manual: bool) -> Res<Site> {
+    state.engine.add_site(&url, name, manual).await.map_err(err)
+}
+
+#[tauri::command]
+async fn check_site_login(state: State<'_, AppState>, id: String) -> Res<Site> {
+    state.engine.check_site_login(&id).await.map_err(err)
+}
+
+#[tauri::command]
+fn remove_site(state: State<'_, AppState>, id: String) -> Res<()> {
+    state.engine.remove_site(&id).map_err(err)
+}
+
+#[tauri::command]
 fn secret_status(state: State<'_, AppState>, names: Vec<String>) -> HashMap<String, bool> {
     names
         .into_iter()
@@ -56,13 +76,18 @@ fn delete_secret(state: State<'_, AppState>, name: String) -> Res<()> {
 }
 
 #[tauri::command]
-fn add_credential(state: State<'_, AppState>, domain: String, username: String, password: String) -> Res<String> {
-    state.engine.add_credential(&domain, &username, &password).map_err(err)
+async fn ai_status(state: State<'_, AppState>) -> Res<Vec<CliStatus>> {
+    Ok(state.engine.ai_status().await)
 }
 
 #[tauri::command]
-fn remove_credential(state: State<'_, AppState>, domain: String) -> Res<()> {
-    state.engine.remove_credential(&domain).map_err(err)
+fn open_ai_login(state: State<'_, AppState>, provider: Provider) -> Res<()> {
+    state.engine.open_ai_login(provider).map_err(err)
+}
+
+#[tauri::command]
+async fn list_models(state: State<'_, AppState>, provider: Provider, endpoint: String) -> Res<Vec<String>> {
+    state.engine.list_models(provider, &endpoint).await.map_err(err)
 }
 
 #[tauri::command]
@@ -83,6 +108,12 @@ fn cancel_search(state: State<'_, AppState>, job: String) {
 }
 
 #[tauri::command]
+async fn cancel_all(state: State<'_, AppState>) -> Res<()> {
+    state.engine.cancel_all().await;
+    Ok(())
+}
+
+#[tauri::command]
 fn resolve_human(state: State<'_, AppState>, agent: String, ok: bool) -> bool {
     state.engine.resolve_human(&agent, ok)
 }
@@ -93,22 +124,14 @@ async fn open_login(state: State<'_, AppState>, site: String) -> Res<()> {
 }
 
 #[tauri::command]
-async fn close_login(state: State<'_, AppState>) -> Res<()> {
-    state.engine.close_login().await;
+async fn close_login(state: State<'_, AppState>, done: bool) -> Res<()> {
+    state.engine.close_login(done).await;
     Ok(())
 }
 
 /// Pasta de dados local do Snipr (mesma usada pelo core).
 fn data_dir() -> PathBuf {
-    dirs_next_local().join("snipr")
-}
-
-fn dirs_next_local() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .or_else(|| std::env::var_os("XDG_DATA_HOME"))
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .unwrap_or_else(std::env::temp_dir)
+    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("snipr")
 }
 
 /// No build release não há console: um erro na inicialização seria invisível.
@@ -178,11 +201,16 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let engine = tauri::async_runtime::block_on(Engine::new())?;
+            let background = match engine.settings().theme {
+                Theme::Light => Color(244, 244, 243, 255),
+                _ => Color(13, 13, 14, 255),
+            };
             app.manage(AppState { engine });
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Snipr")
-                .inner_size(1200.0, 800.0)
-                .min_inner_size(900.0, 620.0)
+                .inner_size(1440.0, 900.0)
+                .min_inner_size(960.0, 640.0)
+                .background_color(background)
                 .data_directory(webview_data_dir())
                 .build()?;
             Ok(())
@@ -191,13 +219,19 @@ fn main() {
             get_settings,
             save_settings,
             list_sites,
+            list_suggestions,
+            add_site,
+            remove_site,
+            check_site_login,
             secret_status,
             set_secret,
             delete_secret,
-            add_credential,
-            remove_credential,
+            ai_status,
+            open_ai_login,
+            list_models,
             start_search,
             cancel_search,
+            cancel_all,
             resolve_human,
             open_login,
             close_login,

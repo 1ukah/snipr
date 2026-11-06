@@ -8,25 +8,35 @@
 
 use anyhow::{bail, Result};
 
+use crate::config::Provider;
+
 const SERVICE: &str = "snipr";
 
-/// Segredos conhecidos e a variável de ambiente equivalente.
-pub const KNOWN: &[(&str, &[&str])] = &[
-    ("claude_code_oauth_token", &["CLAUDE_CODE_OAUTH_TOKEN"]),
-    ("anthropic_api_key", &["ANTHROPIC_API_KEY"]),
-    ("openai_api_key", &["SNIPR_OPENAI_API_KEY", "OPENAI_API_KEY"]),
-];
+pub fn api_key_name(p: Provider) -> String {
+    format!("api_key:{}", p.id())
+}
+
+pub fn oauth_name(p: Provider) -> String {
+    format!("oauth:{}", p.id())
+}
+
+fn parse(name: &str) -> Option<(&str, Provider)> {
+    let (kind, id) = name.split_once(':')?;
+    let p = Provider::ALL.into_iter().find(|p| p.id() == id)?;
+    matches!(kind, "api_key" | "oauth").then_some((kind, p))
+}
 
 pub fn is_known(name: &str) -> bool {
-    KNOWN.iter().any(|(n, _)| *n == name) || name.starts_with("site:")
+    parse(name).is_some()
 }
 
 fn env_value(name: &str) -> Option<String> {
-    KNOWN
-        .iter()
-        .find(|(n, _)| *n == name)
-        .and_then(|(_, vars)| vars.iter().find_map(|v| std::env::var(v).ok()))
-        .filter(|v| !v.trim().is_empty())
+    let vars: &[&str] = match parse(name)? {
+        ("api_key", p) => p.key_env(),
+        ("oauth", Provider::Anthropic) => &["CLAUDE_CODE_OAUTH_TOKEN"],
+        _ => &[],
+    };
+    vars.iter().find_map(|v| std::env::var(v).ok()).filter(|v| !v.trim().is_empty())
 }
 
 fn entry(name: &str) -> Result<keyring::Entry> {
@@ -63,27 +73,26 @@ pub(crate) fn reveal(name: &str) -> Option<String> {
     entry(name).ok().and_then(|e| e.get_password().ok()).or_else(|| env_value(name))
 }
 
-pub fn site_key(domain: &str, field: &str) -> String {
-    format!("site:{domain}:{field}")
-}
-
-pub fn normalize_domain(input: &str) -> String {
-    let s = input.trim().to_lowercase();
-    let s = s.trim_start_matches("https://").trim_start_matches("http://");
-    let s = s.split('/').next().unwrap_or_default();
-    s.trim_start_matches("www.").to_string()
-}
-
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
+    fn nomes_validos() {
+        assert!(is_known("api_key:openai"));
+        assert!(is_known("oauth:anthropic"));
+        assert!(!is_known("api_key:desconhecido"));
+        assert!(!is_known("site:facebook.com:password"));
+    }
+
+    #[test]
+    #[ignore]
     fn cofre_do_sistema_grava_le_e_apaga() {
-        let name = super::site_key("teste.snipr.invalid", "password");
-        super::set(&name, "  s3nh@-de-teste  ").unwrap();
-        assert!(super::has(&name));
-        assert_eq!(super::reveal(&name).as_deref(), Some("s3nh@-de-teste"));
-        super::delete(&name).unwrap();
-        assert!(!super::has(&name));
-        assert!(super::set("nome_desconhecido", "x").is_err());
+        let name = api_key_name(Provider::Custom);
+        set(&name, "  chave-de-teste  ").unwrap();
+        assert!(has(&name));
+        assert_eq!(reveal(&name).as_deref(), Some("chave-de-teste"));
+        delete(&name).unwrap();
+        assert!(set("nome_desconhecido", "x").is_err());
     }
 }

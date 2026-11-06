@@ -3,6 +3,8 @@
 //! runtime Tokio) e imprime os eventos. Usa os ajustes e segredos reais.
 //!
 //!   cargo run -p snipr-core --example search -- "cadeira dt3 n10 xl" mercadolivre,olx
+//!
+//! Com SNIPR_CANCEL_AFTER=<segundos>, cancela tudo no meio da busca.
 
 use std::time::Duration;
 
@@ -15,7 +17,8 @@ fn main() -> anyhow::Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     let engine = rt.block_on(Engine::new())?;
-    println!("provedor: {:?}", engine.settings().provider);
+    let ai = engine.settings().ai;
+    println!("IA: {:?} / {:?}", ai.mode, ai.provider());
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     // Thread sem runtime, como a thread da interface do Tauri.
@@ -26,9 +29,9 @@ fn main() -> anyhow::Result<()> {
                 query,
                 condition: ConditionFilter::Any,
                 sites,
-                mode: AgentMode::Single,
+                mode: Some(AgentMode::Single),
                 max_price: None,
-                notes: None,
+                plan: None,
             },
             tx,
         )
@@ -36,11 +39,20 @@ fn main() -> anyhow::Result<()> {
     .join()
     .expect("thread")?;
     println!("job {job} iniciado");
+    if let Some(secs) = std::env::var("SNIPR_CANCEL_AFTER").ok().and_then(|v| v.parse::<u64>().ok()) {
+        let e3 = engine.clone();
+        rt.spawn(async move {
+            tokio::time::sleep(Duration::from_secs(secs)).await;
+            println!("cancelando tudo");
+            e3.cancel_all().await;
+        });
+    }
 
     rt.block_on(async {
         while let Some(ev) = tokio::time::timeout(Duration::from_secs(600), rx.recv()).await.ok().flatten() {
             match &ev {
                 SearchEvent::Log { message, .. } => println!("  · {message}"),
+                SearchEvent::Planned { plan, .. } => println!("  plano: {plan:?}"),
                 SearchEvent::Listing { listing, .. } => {
                     println!("  $ R$ {:.2} [{:?}] {} — {}", listing.price, listing.condition, listing.title, listing.site_name)
                 }

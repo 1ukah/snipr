@@ -11,6 +11,8 @@ mod cdp;
 mod challenge;
 mod human;
 mod js;
+#[cfg(target_os = "macos")]
+mod macos;
 mod page;
 
 pub use browser::{find_chrome, Browser, BrowserMode, LaunchOptions};

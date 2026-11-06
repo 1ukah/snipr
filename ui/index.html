@@ -1,230 +1,204 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Snipr</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snipr</title>
 </head>
 <body>
-  <aside class="rail">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></symbol>
+  <symbol id="i-user" viewBox="0 0 16 16"><circle cx="8" cy="5.5" r="2.8"/><path d="M2.5 14c.8-2.6 3-4 5.5-4s4.7 1.4 5.5 4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3.2 3L13 4.5"/></symbol>
+  <symbol id="i-out" viewBox="0 0 16 16"><path d="M6 3.5H3.5v9h9V10M9 2.5h4.5V7M13.5 2.5 7.5 8.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 16 16"><path d="M1.5 8.5h3l1.8-4.5 3 8 1.9-3.5h3.3"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 16 16"><path d="M2 4h12M4.5 8h7M7 12h2"/></symbol>
+  <symbol id="i-cond" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></symbol>
+  <symbol id="i-store" viewBox="0 0 16 16"><path d="M2.5 6.5 3.5 2.5h9l1 4M2.5 6.5h11M3.5 6.5V13.5h9V6.5M6.5 13.5v-4h3v4"/></symbol>
+  <symbol id="i-price" viewBox="0 0 16 16"><path d="M8.5 2H14v5.5L7.5 14 2 8.5z"/><circle cx="11" cy="5" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-system" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8.5" rx="1"/><path d="M5.5 14h5M8 11.5V14"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13 9.8A5.5 5.5 0 0 1 6.2 3a5.5 5.5 0 1 0 6.8 6.8z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 0 0 12z" fill="currentColor"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 16 16"><path d="M8 1.5 9.4 6.6 14.5 8 9.4 9.4 8 14.5 6.6 9.4 1.5 8 6.6 6.6z"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 16 16"><rect x="3" y="5" width="10" height="8" rx="2"/><path d="M8 2.5V5M6 9h.01M10 9h.01"/></symbol>
+  <symbol id="i-one" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="currentColor"/></symbol>
+  <symbol id="i-many" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.6" fill="currentColor"/><circle cx="8" cy="8" r="1.6" fill="currentColor"/><circle cx="12.5" cy="8" r="1.6" fill="currentColor"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c1.8 1.7 2.6 3.7 2.6 6S9.8 12.3 8 14C6.2 12.3 5.4 10.3 5.4 8S6.2 3.7 8 2z"/></symbol>
+  <symbol id="i-hidden" viewBox="0 0 16 16"><path d="M2 8s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4z"/><path d="M2.5 13.5l11-11"/></symbol>
+  <symbol id="i-headless" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1" stroke-dasharray="1.6 1.6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 16 16"><path d="M2 8s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4z"/><circle cx="8" cy="8" r="1.8"/></symbol>
+  <symbol id="i-image-off" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1"/><path d="M2 11l3.5-3.5L8 10M2 2l12 12"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1"/><path d="M6 1.5V4M10 1.5V4M6 12v2.5M10 12v2.5M1.5 6H4M1.5 10H4M12 6h2.5M12 10h2.5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></symbol>
+  <symbol id="i-key" viewBox="0 0 16 16"><circle cx="5" cy="10.5" r="2.8"/><path d="M7 8.5 13.5 2M11 4.5l1.8 1.8M9.4 6.1l1.4 1.4"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4"/></symbol>
+  <symbol id="i-skip" viewBox="0 0 16 16"><path d="M3 3.5l6 4.5-6 4.5zM12.5 3.5v9"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="mark" viewBox="0 0 64 64"><g fill="currentColor"><circle cx="4.0" cy="30.0" r="3"/><circle cx="5.75" cy="26.0" r="1"/><circle cx="7.5" cy="22.0" r="1"/><circle cx="9.25" cy="18.0" r="1"/><circle cx="11.0" cy="14.0" r="3"/><circle cx="12.75" cy="18.0" r="1"/><circle cx="14.5" cy="22.0" r="1"/><circle cx="16.25" cy="26.0" r="1"/><circle cx="18.0" cy="30.0" r="3"/><circle cx="21.0" cy="26.0" r="1"/><circle cx="24.0" cy="22.0" r="3"/><circle cx="26.0" cy="25.67" r="1"/><circle cx="28.0" cy="29.33" r="1"/><circle cx="30.0" cy="33.0" r="1"/><circle cx="43.5" cy="33.5" r="1"/><circle cx="46.0" cy="30.0" r="3"/><circle cx="48.33" cy="32.67" r="1"/><circle cx="50.67" cy="35.33" r="1"/><circle cx="53.0" cy="38.0" r="3"/><circle cx="54.17" cy="34.33" r="1"/><circle cx="55.33" cy="30.67" r="1"/><circle cx="56.5" cy="27.0" r="1"/><circle cx="57.67" cy="23.33" r="1"/><circle cx="58.83" cy="19.67" r="1"/><circle cx="60" cy="16" r="3"/><circle cx="36" cy="44" r="2.4"/></g><circle cx="36" cy="44" r="7" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="M41.87 49.87L48.02 56.02" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></symbol>
+  <symbol id="i-infinity" viewBox="0 0 16 16"><path d="M8 8C6.8 6.3 5.6 5.2 4.2 5.2 2.6 5.2 1.5 6.4 1.5 8s1.1 2.8 2.7 2.8C5.6 10.8 6.8 9.7 8 8s2.4-2.8 3.8-2.8c1.6 0 2.7 1.2 2.7 2.8s-1.1 2.8-2.7 2.8C10.4 10.8 9.2 9.7 8 8z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 16 16"><path d="M2.5 4.5h11M6 4.5V2.5h4v2M4 4.5l.7 9h6.6l.7-9"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13 3v3.5H9.5M3 13V9.5h3.5"/><path d="M12.6 6.5A5 5 0 0 0 3.6 5M3.4 9.5a5 5 0 0 0 9 1.5"/></symbol>
+</svg>
+
+<div class="app" id="app">
+  <header class="top"><div class="wrap">
     <div class="brand">
-      <span class="reticle" aria-hidden="true"></span>
-      <span class="wordmark">SNIPR</span>
+      <button class="tb only-narrow" id="o-filters"><svg class="i"><use href="#i-filter"/></svg><span data-t="filters"></span></button>
+      <svg viewBox="0 0 64 64" aria-label="Snipr"><use href="#mark"/></svg>
     </div>
-    <nav>
-      <button class="nav on" data-view="search"><span class="k">01</span>Busca</button>
-      <button class="nav" data-view="accounts"><span class="k">02</span>Contas</button>
-      <button class="nav" data-view="settings"><span class="k">03</span>Ajustes</button>
-    </nav>
-    <div class="rail-foot">
-      <div class="eyebrow">Motor</div>
-      <div id="engine-label" class="mono small">—</div>
+    <form class="bar" id="form" autocomplete="off">
+      <input id="q" spellcheck="false" data-t-placeholder="searchPlaceholder" data-t-aria="search">
+      <button type="submit" class="go" id="go"><svg class="i"><use href="#i-search"/></svg></button>
+      <span class="busy"></span>
+    </form>
+    <div class="acts">
+      <button class="tb" id="o-accounts"><svg class="i"><use href="#i-user"/></svg><span class="lbl" data-t="accounts"></span></button>
+      <button class="tb" id="o-settings"><svg class="i"><use href="#i-gear"/></svg><span class="lbl" data-t="settings"></span></button>
+    </div>
+  </div></header>
+
+  <div class="scroller"><div class="wrap body">
+    <aside class="side" id="side">
+      <div class="fs">
+        <div class="fl"><svg class="i"><use href="#i-cond"/></svg><span data-t="condition"></span></div>
+        <div id="f-cond"></div>
+      </div>
+      <div class="fs">
+        <div class="fl"><svg class="i"><use href="#i-globe"/></svg><span data-t="origin"></span></div>
+        <div id="f-origin"></div>
+      </div>
+      <div class="fs">
+        <div class="fl"><svg class="i"><use href="#i-store"/></svg><span data-t="stores"></span><button class="fl-add" id="o-stores" data-t-title="manageStores" data-t-aria="manageStores"><svg class="i"><use href="#i-plus"/></svg></button></div>
+        <div class="sel" id="stores"></div>
+      </div>
+      <div class="fs">
+        <div class="fl"><svg class="i"><use href="#i-price"/></svg><span data-t="price"></span></div>
+        <div class="hist" id="hist"></div>
+        <div class="range"><input type="range" id="r-lo" data-t-aria="priceMin"><input type="range" id="r-hi" data-t-aria="priceMax"></div>
+        <div class="pr">
+          <label>R$<input id="p-lo" inputmode="numeric" data-t-aria="priceMin"></label>
+          <span>–</span>
+          <label>R$<input id="p-hi" inputmode="numeric" data-t-aria="priceMax"><svg class="i inf-ic" aria-hidden="true"><use href="#i-infinity"/></svg></label>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="plan" id="plan"></div>
+      <div class="human" id="human" hidden></div>
+      <div class="more" id="more" hidden></div>
+      <div class="rh" id="rh" hidden>
+        <span id="count"></span>
+        <label class="rfind"><svg class="i"><use href="#i-search"/></svg><input id="r-filter" type="text" spellcheck="false" data-t-placeholder="filterResults" data-t-aria="filterResults"></label>
+        <span class="sp"></span>
+        <button class="tg" id="t-progress" role="switch" aria-checked="false"><span class="sw"></span><svg class="i"><use href="#i-pulse"/></svg><span data-t="progress"></span></button>
+      </div>
+      <div class="agents" id="agents" hidden></div>
+      <ol class="list" id="list"></ol>
+      <div class="empty" id="empty">
+        <p data-t="emptyHelp"></p>
+        <p><code data-t="emptyExample"></code></p>
+      </div>
+    </main>
+  </div></div>
+
+  <div class="scrim" id="scrim" hidden></div>
+
+  <aside class="sheet" id="settings" hidden>
+    <div class="hd"><h2 data-t="settings"></h2><button class="ib" data-close data-t-title="close"><svg class="i"><use href="#i-x"/></svg></button></div>
+    <div class="grp">
+      <div class="lab"><svg class="i"><use href="#i-palette"/></svg><span data-t="theme"></span></div>
+      <div class="seg" id="theme"></div>
+    </div>
+    <div class="grp">
+      <div class="lab"><svg class="i"><use href="#i-spark"/></svg><span data-t="ai"></span></div>
+      <div class="seg" id="auth"></div>
+      <div class="auth" id="auth-login"></div>
+      <div class="auth" id="auth-key" hidden>
+        <div class="sel" id="key-prov"></div>
+        <div class="field" id="key-endpoint" hidden><span class="pre" data-t="endpoint"></span><input id="endpoint" placeholder="https://…/v1" spellcheck="false" data-t-aria="endpoint"></div>
+        <div class="field" id="key-secret"></div>
+      </div>
+      <div class="auth" id="auth-oauth" hidden>
+        <div class="field static"><span class="pre" data-t="provider"></span><span>Anthropic</span></div>
+        <div class="field" id="oauth-secret"></div>
+      </div>
+      <p class="note" id="auth-note" hidden><svg class="i"><use href="#i-lock"/></svg><span data-t="secretNote"></span></p>
+      <div class="pair2">
+        <div class="sel model" id="model"></div>
+        <div class="sel" id="effort"></div>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lab"><svg class="i"><use href="#i-bot"/></svg><span data-t="agents"></span></div>
+      <div class="seg" id="amode"></div>
+      <p class="why" id="why-a"></p>
+      <div class="kv"><span data-t="parallel"></span><label class="field"><input id="max-parallel" inputmode="numeric" data-t-aria="parallel"></label></div>
+      <div class="kv"><span data-t="maxSteps"></span><label class="field"><input id="max-steps" inputmode="numeric" data-t-aria="maxSteps"></label></div>
+    </div>
+    <div class="grp">
+      <div class="lab"><svg class="i"><use href="#i-globe"/></svg><span data-t="browser"></span></div>
+      <div class="seg" id="bmode"></div>
+      <p class="why" id="why-b"></p>
+      <button class="tg" id="t-media" role="switch"><span class="sw"></span><svg class="i"><use href="#i-image-off"/></svg><span data-t="blockMedia"></span></button>
+      <button class="tg" id="t-memory" role="switch"><span class="sw"></span><svg class="i"><use href="#i-chip"/></svg><span data-t="lowMemory"></span></button>
+      <div class="kv"><span data-t="idleClose"></span><label class="field"><input id="idle" inputmode="numeric" data-t-aria="idleClose"><span class="pre">s</span></label></div>
+      <details>
+        <summary><span data-t="advanced"></span><svg class="i"><use href="#i-down"/></svg></summary>
+        <div class="grp">
+          <div class="field"><span class="pre">Chrome</span><input id="chrome-path" spellcheck="false" data-t-placeholder="autoDetect" data-t-aria="chromePath"></div>
+          <div class="field"><span class="pre" data-t="cliPath"></span><input id="cli-path" spellcheck="false" data-t-placeholder="autoDetect" data-t-aria="cliPath"></div>
+        </div>
+      </details>
     </div>
   </aside>
 
-  <main>
-    <!-- BUSCA -->
-    <section class="view on" id="view-search">
-      <form id="search-form" class="ticket" autocomplete="off">
-        <div class="ticket-head">
-          <label class="eyebrow" for="q">Alvo</label>
-          <span id="job-status" class="mono small muted"></span>
+  <aside class="sheet" id="accounts" hidden>
+    <div class="hd"><h2 data-t="accounts"></h2><button class="ib" data-close data-t-title="close"><svg class="i"><use href="#i-x"/></svg></button></div>
+    <div class="grp">
+      <p class="why" data-t="accountsHelp"></p>
+      <div class="human" id="login-bar" hidden></div>
+      <div id="site-rows"></div>
+    </div>
+  </aside>
+
+  <section class="modal" id="stores-modal" hidden role="dialog" aria-modal="true" aria-labelledby="sm-title">
+    <div class="m-hd">
+      <h2 id="sm-title" data-t="stores"></h2>
+      <label class="m-find"><svg class="i"><use href="#i-search"/></svg><input id="sm-q" type="text" spellcheck="false" data-t-placeholder="findStore" data-t-aria="findStore"></label>
+      <button class="btn" id="sm-recheck" data-t-title="recheckLoginTitle"><svg class="i"><use href="#i-refresh"/></svg><span data-t="recheckLogin"></span></button>
+      <button class="ib" data-close data-t-title="close"><svg class="i"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="m-body">
+      <section class="m-sec">
+        <div class="m-sec-hd"><div class="lab"><svg class="i"><use href="#i-check"/></svg><span data-t="added"></span><span class="cnt" id="sm-n-added"></span></div></div>
+        <div class="strip two" id="sm-added"></div>
+      </section>
+      <section class="m-sec">
+        <div class="m-sec-hd"><div class="lab"><svg class="i"><use href="#i-spark"/></svg><span data-t="suggestions"></span><span class="cnt" id="sm-n-sugg"></span></div></div>
+        <div class="strip two" id="sm-sugg"></div>
+      </section>
+      <section class="m-sec">
+        <div class="m-sec-hd">
+          <div class="lab"><svg class="i"><use href="#i-globe"/></svg><span data-t="manual"></span><span class="cnt" id="sm-n-man"></span></div>
+          <form class="m-url" id="sm-url" autocomplete="off">
+            <div class="field"><input id="sm-url-in" type="text" inputmode="url" placeholder="https://www.loja.com.br" spellcheck="false" data-t-aria="storeUrl"></div>
+            <button class="btn pri" type="submit"><svg class="i"><use href="#i-plus"/></svg><span data-t="add"></span></button>
+          </form>
         </div>
-        <div class="query-row">
-          <input id="q" class="query" placeholder="ex.: cadeira DT3 N10 XL" required>
-          <button id="go" class="btn-fire" type="submit">Caçar</button>
-        </div>
-        <div class="controls">
-          <div class="seg" data-name="condition">
-            <button type="button" data-v="any" class="on">Novo + usado</button>
-            <button type="button" data-v="new">Só novo</button>
-            <button type="button" data-v="used">Só usado</button>
-          </div>
-          <div class="seg" data-name="mode" title="Multi = um agente por site, em paralelo">
-            <button type="button" data-v="single" class="on">1 agente</button>
-            <button type="button" data-v="multi">Multi-agente</button>
-          </div>
-          <label class="field-inline">até R$
-            <input id="max-price" type="number" min="0" step="1" placeholder="—">
-          </label>
-          <input id="notes" class="notes" placeholder="detalhes (opcional): cor, região, versão…">
-        </div>
-        <div id="site-chips" class="chips"></div>
-      </form>
+        <p class="note err" id="sm-url-msg" hidden></p>
+        <div class="strip" id="sm-man"></div>
+      </section>
+    </div>
+  </section>
 
-      <div class="board">
-        <div class="results">
-          <div class="stubs">
-            <div class="stub" id="best-new">
-              <div class="eyebrow">Menor novo</div>
-              <div class="stub-price mono">—</div>
-              <div class="stub-meta small muted"></div>
-            </div>
-            <div class="stub" id="best-used">
-              <div class="eyebrow">Menor usado</div>
-              <div class="stub-price mono">—</div>
-              <div class="stub-meta small muted"></div>
-            </div>
-          </div>
-          <div class="tabs">
-            <button class="tab on" data-f="all">Todos <span class="n">0</span></button>
-            <button class="tab" data-f="new">Novos <span class="n">0</span></button>
-            <button class="tab" data-f="used">Usados <span class="n">0</span></button>
-          </div>
-          <ol id="list" class="receipt"></ol>
-          <div id="empty" class="empty">
-            <p class="mono">Nenhum anúncio ainda.</p>
-            <p class="small muted">Digite o produto, escolha os sites e clique em <b>Caçar</b>. Os resultados aparecem aqui conforme os agentes encontram.</p>
-          </div>
-        </div>
-
-        <aside class="activity">
-          <div class="eyebrow">Agentes</div>
-          <div id="human"></div>
-          <div id="agents" class="agents"></div>
-          <div class="eyebrow log-head">Registro</div>
-          <ol id="log" class="log mono"></ol>
-        </aside>
-      </div>
-    </section>
-
-    <!-- CONTAS -->
-    <section class="view" id="view-accounts">
-      <header class="page-head">
-        <h1>Contas</h1>
-        <p class="muted">Sites como o Facebook Marketplace só mostram resultados com login. Entre <b>uma vez</b> na janela do navegador do Snipr e a sessão fica salva no perfil local.</p>
-      </header>
-      <div id="login-banner" class="banner" hidden>
-        <div>
-          <div class="eyebrow">Janela aberta</div>
-          <p id="login-text"></p>
-        </div>
-        <button id="login-done" class="btn">Concluí</button>
-      </div>
-      <div id="site-logins" class="rows"></div>
-
-      <header class="page-head sub">
-        <h2>Cofre de credenciais</h2>
-        <p class="muted">Opcional. Permite que o agente refaça o login sozinho quando a sessão expirar. A senha vai para o cofre do sistema operacional e nunca é mostrada, nem para você nem para a IA: o agente só pode mandar digitá-la no próprio domínio.</p>
-      </header>
-      <form id="cred-form" class="cred-form" autocomplete="off">
-        <input name="domain" placeholder="domínio (ex.: facebook.com)" required>
-        <input name="username" placeholder="usuário / e-mail" required autocomplete="off">
-        <input name="password" type="password" placeholder="senha" required autocomplete="new-password">
-        <button class="btn" type="submit">Guardar</button>
-      </form>
-      <div id="cred-list" class="rows"></div>
-    </section>
-
-    <!-- AJUSTES -->
-    <section class="view" id="view-settings">
-      <header class="page-head">
-        <h1>Ajustes</h1>
-      </header>
-      <form id="settings-form" class="settings" autocomplete="off">
-        <fieldset>
-          <legend>Inteligência</legend>
-          <label>Provedor
-            <select name="provider">
-              <option value="claude_code">Claude Code (assinatura / OAuth)</option>
-              <option value="anthropic">Anthropic API (API key)</option>
-              <option value="openai_compat">Compatível com OpenAI (OpenAI, Grok, Gemini, OpenRouter, Ollama)</option>
-            </select>
-          </label>
-          <label class="for-openai">Endpoint
-            <div class="pair">
-              <select id="base-preset">
-                <option value="">personalizado</option>
-                <option value="https://api.openai.com/v1">OpenAI</option>
-                <option value="https://api.x.ai/v1">xAI (Grok)</option>
-                <option value="https://generativelanguage.googleapis.com/v1beta/openai">Google Gemini</option>
-                <option value="https://openrouter.ai/api/v1">OpenRouter</option>
-                <option value="http://localhost:11434/v1">Ollama (local)</option>
-              </select>
-              <input name="openai_base_url" placeholder="https://…/v1">
-            </div>
-          </label>
-          <label>Modelo
-            <input name="model" id="model-input">
-          </label>
-          <label>Esforço de raciocínio
-            <select name="effort">
-              <option value="">padrão do modelo</option>
-              <option value="low">baixo (mais rápido e barato)</option>
-              <option value="medium">médio</option>
-              <option value="high">alto</option>
-              <option value="xhigh">muito alto</option>
-            </select>
-          </label>
-
-          <div class="secret for-claude_code" data-name="claude_code_oauth_token">
-            <span class="label">Token OAuth do Claude Code</span>
-            <div class="secret-row">
-              <input type="password" spellcheck="false" autocomplete="off">
-              <span class="secret-state mono small"></span>
-              <button type="button" class="link" data-act="del">remover</button>
-            </div>
-            <p class="hint">Gere com <code>claude setup-token</code> e cole aqui. Opcional: se ficar vazio, o Snipr usa o login que o Claude Code já tem nesta máquina.</p>
-          </div>
-          <div class="secret for-anthropic" data-name="anthropic_api_key">
-            <span class="label">API key da Anthropic</span>
-            <div class="secret-row">
-              <input type="password" spellcheck="false" autocomplete="off">
-              <span class="secret-state mono small"></span>
-              <button type="button" class="link" data-act="del">remover</button>
-            </div>
-          </div>
-          <div class="secret for-openai_compat" data-name="openai_api_key">
-            <span class="label">API key do provedor</span>
-            <div class="secret-row">
-              <input type="password" spellcheck="false" autocomplete="off">
-              <span class="secret-state mono small"></span>
-              <button type="button" class="link" data-act="del">remover</button>
-            </div>
-            <p class="hint">Deixe vazio para provedores locais (Ollama).</p>
-          </div>
-          <p class="hint">Chaves coladas vão direto para o cofre do sistema e somem do campo. Dá para trocar ou remover, nunca para ver de novo.</p>
-        </fieldset>
-
-        <fieldset>
-          <legend>Navegador</legend>
-          <label>Modo
-            <select name="browser_mode">
-              <option value="hidden">Oculto: Chrome real fora da tela (recomendado)</option>
-              <option value="headless">Headless: um pouco mais leve, mais detectável</option>
-              <option value="visible">Visível: para acompanhar os agentes</option>
-            </select>
-          </label>
-          <label class="check"><input type="checkbox" name="block_media"> Bloquear imagens, fontes e vídeos (economiza RAM e banda)</label>
-          <label class="check"><input type="checkbox" name="low_memory"> Modo de pouca memória (menos processos do Chrome)</label>
-          <div class="grid3">
-            <label>Agentes em paralelo
-              <input type="number" name="max_parallel" min="1" max="8">
-            </label>
-            <label>Passos por agente
-              <input type="number" name="max_steps" min="5" max="200">
-            </label>
-            <label>Fechar Chrome ocioso após (s)
-              <input type="number" name="idle_close_secs" min="0">
-            </label>
-          </div>
-          <label><span>Caminho do Chrome <span class="muted">(vazio = detectar)</span></span>
-            <input name="chrome_path" spellcheck="false">
-          </label>
-          <label><span>Caminho do Claude Code <span class="muted">(vazio = detectar)</span></span>
-            <input name="claude_path" spellcheck="false">
-          </label>
-        </fieldset>
-        <div class="save-row">
-          <span id="save-msg" class="mono small muted"></span>
-          <button class="btn" type="submit">Salvar ajustes</button>
-        </div>
-      </form>
-    </section>
-  </main>
-
-  <div id="toast" class="toast" hidden></div>
-  <script src="app.js"></script>
+  <div class="toast" id="toast" hidden></div>
+</div>
+<script type="module" src="/src/main.ts"></script>
 </body>
 </html>

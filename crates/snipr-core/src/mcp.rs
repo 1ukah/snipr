@@ -168,7 +168,8 @@ mod tests {
             all_sites: sites,
             filter: ConditionFilter::Any,
             max_price: None,
-            credential_domains: vec![],
+            sessions: Default::default(),
+            on_session: Arc::new(|_, _| {}),
             events: tx,
             gates: Arc::new(HumanGates::default()),
             listings: Default::default(),
@@ -201,10 +202,6 @@ mod tests {
         ]}))).await;
         println!("report_listings → {}", r["result"]["content"][0]["text"]);
         assert_eq!(tools.listings.lock().len(), 1);
-
-        // Credencial fora do domínio dono: recusada.
-        let r = rpc(&http, &url, server.token(), call(6, "type_secret", json!({"ref":0,"field":"password"}))).await;
-        assert_eq!(r["result"]["isError"], true);
 
         let mut n = 0;
         while let Ok(ev) = rx.try_recv() {

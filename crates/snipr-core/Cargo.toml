@@ -23,6 +23,7 @@ which.workspace = true
 dotenvy.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
+ts-rs = { version = "10", features = ["serde-compat", "no-serde-warnings"] }
 
 # Cofre de segredos nativo de cada sistema operacional.
 [target.'cfg(windows)'.dependencies]

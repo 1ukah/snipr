@@ -18,10 +18,12 @@ use snipr_llm::ToolSpec;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    secrets,
+    config::SessionState,
     sites::Site,
-    types::{Condition, ConditionFilter, Listing, SearchEvent},
+    types::{Condition, ConditionFilter, HumanKind, Listing, SearchEvent},
 };
+
+pub type SessionHook = Arc<dyn Fn(&str, bool) + Send + Sync>;
 
 const MAX_OUTPUT: usize = 12_000;
 
@@ -59,7 +61,8 @@ pub struct ToolBox {
     all_sites: Vec<Site>,
     filter: ConditionFilter,
     max_price: Option<f64>,
-    credential_domains: Vec<String>,
+    sessions: HashMap<String, SessionState>,
+    on_session: SessionHook,
     events: mpsc::UnboundedSender<SearchEvent>,
     gates: Arc<HumanGates>,
     pub listings: Arc<Mutex<Vec<Listing>>>,
@@ -78,7 +81,8 @@ pub struct ToolBoxInit {
     pub all_sites: Vec<Site>,
     pub filter: ConditionFilter,
     pub max_price: Option<f64>,
-    pub credential_domains: Vec<String>,
+    pub sessions: HashMap<String, SessionState>,
+    pub on_session: SessionHook,
     pub events: mpsc::UnboundedSender<SearchEvent>,
     pub gates: Arc<HumanGates>,
     pub listings: Arc<Mutex<Vec<Listing>>>,
@@ -94,7 +98,8 @@ impl ToolBox {
             all_sites: i.all_sites,
             filter: i.filter,
             max_price: i.max_price,
-            credential_domains: i.credential_domains,
+            sessions: i.sessions,
+            on_session: i.on_session,
             events: i.events,
             gates: i.gates,
             listings: i.listings,
@@ -148,13 +153,6 @@ impl ToolBox {
               json!({ "type": "object", "properties": {
                   "ref": { "type": "integer" }, "text": { "type": "string" }, "submit": { "type": "boolean" }
               }, "required": ["ref", "text"], "additionalProperties": false })),
-            t("type_secret",
-              "Digita uma credencial guardada no cofre (usuário ou senha) do site atual no campo [ref]. Você nunca vê o valor. Só funciona no domínio dono da credencial.",
-              json!({ "type": "object", "properties": {
-                  "ref": { "type": "integer" },
-                  "field": { "type": "string", "enum": ["username", "password"] },
-                  "submit": { "type": "boolean" }
-              }, "required": ["ref", "field"], "additionalProperties": false })),
             t("scroll", "Rola a página (carrega mais resultados em sites com rolagem infinita).",
               json!({ "type": "object", "properties": { "direction": { "type": "string", "enum": ["down", "up"] } }, "additionalProperties": false })),
             t("open_url", "Abre uma URL (ex.: página de um anúncio para conferir detalhes).",
@@ -174,7 +172,9 @@ impl ToolBox {
                       "seller": { "type": "string" },
                       "location": { "type": "string" },
                       "shipping": { "type": "string" },
-                      "notes": { "type": "string" }
+                      "notes": { "type": "string" },
+                      "original_price": { "type": "number", "description": "preço riscado (antes do desconto) em reais, se o anúncio mostrar" },
+                      "international": { "type": "boolean", "description": "true se for venda internacional (enviada do exterior, sujeita a taxa de importação)" }
                   }, "required": ["title", "price", "condition", "url"] } }
               }, "required": ["site_id", "listings"], "additionalProperties": false })),
             t("request_human",
@@ -217,6 +217,12 @@ impl ToolBox {
                 if q.trim().is_empty() {
                     anyhow::bail!("query vazia");
                 }
+                if site.search_url.is_empty() {
+                    let nav = self.navigate(&site.home()).await?;
+                    return Ok(format!(
+                        "{nav}\nEste site não tem URL de busca conhecida. Use snapshot com filter \"busca\" ou \"pesquisar\" para achar o campo de busca e type_text com submit=true para buscar \"{q}\"."
+                    ));
+                }
                 let url = site.build_search_url(&q);
                 let nav = self.navigate(&url).await?;
                 Ok(nav)
@@ -241,7 +247,6 @@ impl ToolBox {
                 self.page.type_into(r, &s("text"), submit).await?;
                 Ok(format!("Digitado{}.", if submit { " e enviado" } else { "" }))
             }
-            "type_secret" => self.type_secret(input).await,
             "scroll" => {
                 self.page.scroll(s("direction") != "up").await?;
                 Ok("Página rolada.".into())
@@ -251,7 +256,7 @@ impl ToolBox {
                 Ok(format!("Voltou para {} — {}", nav.url, nav.title))
             }
             "report_listings" => self.report(input),
-            "request_human" => self.ask_human(&s("reason"), None).await,
+            "request_human" => self.ask_human(HumanKind::Other, &s("reason"), None).await,
             "finish" => {
                 *self.summary.lock() = s("summary");
                 self.finished.store(true, Ordering::SeqCst);
@@ -279,11 +284,33 @@ impl ToolBox {
         }
         if let ChallengeOutcome::Unsolved(kind) = &nav.challenge {
             let host = host_of(&nav.url);
-            let reason = format!("Desafio anti-bot ({kind}) em {host} não passou sozinho. Resolva na janela que abriu e clique em 'Resolvido'.");
-            let r = self.ask_human(&reason, Some(host)).await?;
+            let reason = format!("Desafio anti-bot ({kind}) em {host} não passou sozinho.");
+            let r = self.ask_human(HumanKind::Challenge, &reason, self.site_for(&host).map(|s| s.id.clone())).await?;
             nav = self.page.info(ChallengeOutcome::None).await?;
             if let Some(k) = self.page.detect_challenge().await {
                 return Ok(format!("{r}\nO site continua bloqueado ({k}). Siga para o próximo site."));
+            }
+        }
+        if self.login_wall().await {
+            let host = host_of(&nav.url);
+            let site = self.site_for(&host).cloned();
+            let site_id = site.as_ref().map(|s| s.id.clone());
+            let expired = site_id.as_ref().is_some_and(|id| self.sessions.get(id) == Some(&SessionState::Ok));
+            if let Some(id) = &site_id {
+                (self.on_session)(id, false);
+            }
+            let kind = if expired { HumanKind::Expired } else { HumanKind::Login };
+            let r = self.ask_human(kind, &format!("{host} pede login."), site_id.clone()).await?;
+            if r.starts_with("O usuário concluiu") {
+                if let Some(id) = &site_id {
+                    (self.on_session)(id, true);
+                }
+                nav = self.page.goto(url).await?;
+                if self.login_wall().await {
+                    return Ok(format!("{host} continua pedindo login. Siga para o próximo site."));
+                }
+            } else {
+                return Ok(r);
             }
         }
         Ok(format!(
@@ -294,11 +321,30 @@ impl ToolBox {
         ))
     }
 
-    async fn ask_human(&self, reason: &str, site: Option<String>) -> anyhow::Result<String> {
+    fn site_for(&self, host: &str) -> Option<&Site> {
+        self.all_sites.iter().find(|s| s.matches_host(host))
+    }
+
+    async fn login_wall(&self) -> bool {
+        const JS: &str = r#"(() => {
+            const path = (location.pathname + location.search).toLowerCase();
+            if (/(^|[\/_.?=-])(login|signin|sign-in|entrar|acesso|auth|account\/login)([\/_.?=&-]|$)/.test(path)) return true;
+            const pw = [...document.querySelectorAll('input[type=password]')].some((e) => {
+                const r = e.getBoundingClientRect();
+                const st = getComputedStyle(e);
+                return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
+            });
+            return pw;
+        })()"#;
+        self.page.eval(JS).await.ok().and_then(|v| v.as_bool()).unwrap_or(false)
+    }
+
+    async fn ask_human(&self, kind: HumanKind, reason: &str, site: Option<String>) -> anyhow::Result<String> {
         let _ = self.events.send(SearchEvent::NeedsHuman {
             job: self.job.clone(),
             agent: self.agent.clone(),
             site,
+            kind,
             reason: reason.to_string(),
         });
         let shown = self.page.set_visible(true).await;
@@ -313,27 +359,6 @@ impl ToolBox {
             Some(false) => "O usuário preferiu pular. Siga para o próximo site.".into(),
             None => "Sem resposta do usuário (tempo esgotado). Siga para o próximo site.".into(),
         })
-    }
-
-    async fn type_secret(&self, input: &Value) -> anyhow::Result<String> {
-        let r = input.get("ref").and_then(Value::as_u64).ok_or_else(|| anyhow::anyhow!("ref ausente"))? as u32;
-        let field = input.get("field").and_then(Value::as_str).unwrap_or_default();
-        if field != "username" && field != "password" {
-            anyhow::bail!("field deve ser 'username' ou 'password'");
-        }
-        let host = host_of(&self.page.url().await?);
-        // A credencial só pode ser digitada no domínio dono dela: protege contra
-        // páginas maliciosas que tentem induzir o agente a vazar a senha.
-        let domain = self
-            .credential_domains
-            .iter()
-            .find(|d| host == **d || host.ends_with(&format!(".{d}")))
-            .ok_or_else(|| anyhow::anyhow!("não há credencial cadastrada para {host}. Use request_human para o usuário logar."))?;
-        let value = secrets::reveal(&secrets::site_key(domain, field))
-            .ok_or_else(|| anyhow::anyhow!("credencial de {domain} não encontrada no cofre"))?;
-        let submit = input.get("submit").and_then(Value::as_bool).unwrap_or(false);
-        self.page.type_into(r, &value, submit).await?;
-        Ok(format!("{field} de {domain} digitado{}.", if submit { " e enviado" } else { "" }))
     }
 
     fn report(&self, input: &Value) -> anyhow::Result<String> {
@@ -389,6 +414,8 @@ impl ToolBox {
                 location: opt("location"),
                 shipping: opt("shipping"),
                 notes: opt("notes"),
+                original_price: parse_price(&it["original_price"]).filter(|p| p.is_finite() && *p > price),
+                international: it["international"].as_bool().unwrap_or(false),
             };
             all.push(listing.clone());
             drop(all);
@@ -459,7 +486,6 @@ fn describe(name: &str, input: &Value) -> Option<String> {
         "snapshot" => "inspecionando a página".into(),
         "click" => "clicando".into(),
         "type_text" => "digitando".into(),
-        "type_secret" => "preenchendo credencial do cofre".into(),
         "scroll" => "rolando a página".into(),
         "read_text" => "lendo detalhes do anúncio".into(),
         "go_back" => "voltando".into(),

@@ -31,6 +31,7 @@ pub struct Page {
     pub target_id: String,
     world: Mutex<Option<i64>>,
     mouse: Mutex<(f64, f64)>,
+    context: Option<String>,
 }
 
 const BLOCKED_PATTERNS: &[&str] = &[
@@ -47,11 +48,12 @@ const BLOCKED_PATTERNS: &[&str] = &[
 ];
 
 impl Page {
-    pub(crate) fn new(browser: Arc<Browser>, session: String, target_id: String) -> Self {
+    pub(crate) fn new(browser: Arc<Browser>, session: String, target_id: String, context: Option<String>) -> Self {
         Self {
             browser,
             session,
             target_id,
+            context,
             world: Mutex::new(None),
             mouse: Mutex::new((
                 rnd(300, 700) as f64,
@@ -434,6 +436,12 @@ impl Page {
         if self.browser.mode() == BrowserMode::Headless {
             bail!("o navegador está em modo headless; mude para 'oculto' nos ajustes para poder mostrar a janela");
         }
+        if !visible && self.browser.conceal().await? {
+            return Ok(());
+        }
+        if visible {
+            self.browser.reveal(&self.target_id).await?;
+        }
         let w = self
             .browser
             .cdp
@@ -463,5 +471,13 @@ impl Page {
             .cdp
             .call_timeout(None, "Target.closeTarget", json!({ "targetId": self.target_id }), Duration::from_secs(5))
             .await;
+        self.browser.page_closed(&self.target_id).await;
+        if let Some(ctx) = &self.context {
+            let _ = self
+                .browser
+                .cdp
+                .call_timeout(None, "Target.disposeBrowserContext", json!({ "browserContextId": ctx }), Duration::from_secs(5))
+                .await;
+        }
     }
 }

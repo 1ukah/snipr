@@ -12,6 +12,7 @@ pub struct OpenAiConfig {
     pub base_url: String,
     pub api_key: Option<String>,
     pub model: String,
+    pub effort: Option<String>,
 }
 
 pub struct OpenAiSession {
@@ -33,12 +34,21 @@ impl OpenAiSession {
     }
 
     async fn request(&mut self) -> Result<Turn> {
-        let body = json!({
+        let mut body = json!({
             "model": self.cfg.model,
             "messages": self.messages,
-            "tools": self.tools,
-            "tool_choice": "auto",
         });
+        if !self.tools.is_empty() {
+            body["tools"] = json!(self.tools);
+            body["tool_choice"] = json!("auto");
+        }
+        if let Some(e) = self.cfg.effort.as_deref().filter(|e| !e.is_empty()) {
+            let e = match e {
+                "xhigh" | "max" => "high",
+                other => other,
+            };
+            body["reasoning_effort"] = json!(e);
+        }
         let url = format!("{}/chat/completions", self.cfg.base_url.trim_end_matches('/'));
         let mut attempt = 0;
         let v: Value = loop {
@@ -110,4 +120,32 @@ impl ChatSession for OpenAiSession {
         }
         self.request().await
     }
+}
+
+pub async fn list_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<String>> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let mut req = http().get(&url);
+    if let Some(k) = api_key.filter(|k| !k.is_empty()) {
+        req = req.bearer_auth(k);
+    }
+    let r = req.send().await.map_err(|e| anyhow!("falha de rede com {base_url}: {e}"))?;
+    let status = r.status();
+    let text = r.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let msg = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| v["error"]["message"].as_str().map(String::from))
+            .unwrap_or_else(|| text.chars().take(300).collect());
+        bail!("API respondeu {status}: {msg}");
+    }
+    let v: Value = serde_json::from_str(&text)?;
+    let mut ids: Vec<String> = v["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m["id"].as_str().map(|s| s.trim_start_matches("models/").to_string()))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }

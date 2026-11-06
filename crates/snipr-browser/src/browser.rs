@@ -48,6 +48,10 @@ pub struct LaunchOptions {
 pub struct Browser {
     pub(crate) cdp: Arc<Cdp>,
     child: tokio::sync::Mutex<Option<Child>>,
+    pid: Option<u32>,
+    revealed: std::sync::atomic::AtomicBool,
+    startup: parking_lot::Mutex<Vec<String>>,
+    shown: parking_lot::Mutex<Option<String>>,
     pub(crate) opts: LaunchOptions,
     pub(crate) ua_override: Option<UaOverride>,
     pub version: String,
@@ -129,7 +133,9 @@ impl Browser {
         ];
         match opts.mode {
             BrowserMode::Hidden => {
-                args.push(format!("--window-position={},{}", HIDDEN_POS.0, HIDDEN_POS.1));
+                if !cfg!(target_os = "macos") {
+                    args.push(format!("--window-position={},{}", HIDDEN_POS.0, HIDDEN_POS.1));
+                }
                 args.push(format!("--window-size={},{}", WINDOW_SIZE.0, WINDOW_SIZE.1));
             }
             BrowserMode::Headless => {
@@ -175,20 +181,33 @@ impl Browser {
                 args.extend(extra.split_whitespace().map(String::from));
             }
         }
-        args.push("about:blank".into());
 
         tracing::info!(exe = %exe.display(), mode = ?opts.mode, "lançando navegador");
-        let child = Command::new(&exe)
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| format!("falha ao iniciar {}", exe.display()))?;
+        let hides_app = cfg!(target_os = "macos") && opts.mode == BrowserMode::Hidden;
+        if let Some(stale) = find_pid(&opts.profile_dir) {
+            tracing::warn!(pid = stale, "encerrando um Chrome antigo do Snipr");
+            kill_pid(stale);
+            let start = Instant::now();
+            while pid_alive(stale) && start.elapsed() < Duration::from_secs(5) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+        let (child, mut pid) = spawn(&exe, &args, hides_app)?;
 
-        let ws_url = wait_devtools_port(&port_file, Duration::from_secs(25)).await?;
+        let ws_url = match wait_devtools_port(&port_file, Duration::from_secs(25)).await {
+            Ok(u) => u,
+            Err(e) => {
+                if let Some(p) = pid.or_else(|| find_pid(&opts.profile_dir)) {
+                    kill_pid(p);
+                }
+                return Err(e);
+            }
+        };
+        if pid.is_none() {
+            pid = find_pid(&opts.profile_dir);
+        }
         let cdp = Cdp::connect(&ws_url).await?;
+        let startup = page_targets(&cdp).await;
         let ver = cdp.call(None, "Browser.getVersion", json!({})).await?;
         let user_agent = ver["userAgent"].as_str().unwrap_or_default().to_string();
         let version = ver["product"].as_str().unwrap_or_default().to_string();
@@ -199,7 +218,103 @@ impl Browser {
             None
         };
 
-        Ok(Arc::new(Self { cdp, child: tokio::sync::Mutex::new(Some(child)), opts, ua_override, version }))
+        let browser = Arc::new(Self {
+            cdp,
+            child: tokio::sync::Mutex::new(child),
+            pid,
+            revealed: std::sync::atomic::AtomicBool::new(false),
+            startup: parking_lot::Mutex::new(startup),
+            shown: parking_lot::Mutex::new(None),
+            opts,
+            ua_override,
+            version,
+        });
+        browser.keep_hidden();
+        if browser.hides_app() {
+            let weak = Arc::downgrade(&browser);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    let Some(b) = weak.upgrade() else { break };
+                    if b.cdp.is_closed() {
+                        break;
+                    }
+                    b.keep_hidden();
+                }
+            });
+        }
+        Ok(browser)
+    }
+
+    pub fn app_hidden(&self) -> Option<bool> {
+        #[cfg(target_os = "macos")]
+        if let Some(pid) = self.pid {
+            return crate::macos::is_hidden(pid);
+        }
+        None
+    }
+
+    fn hides_app(&self) -> bool {
+        cfg!(target_os = "macos") && self.opts.mode == BrowserMode::Hidden
+    }
+
+    fn keep_hidden(&self) {
+        #[cfg(target_os = "macos")]
+        if self.hides_app() && !self.revealed.load(std::sync::atomic::Ordering::SeqCst) {
+            if let Some(pid) = self.pid.filter(|p| crate::macos::is_hidden(*p) == Some(false)) {
+                crate::macos::hide(pid);
+            }
+        }
+    }
+
+    async fn page_windows(&self) -> Vec<(String, Value)> {
+        let Ok(t) = self.cdp.call(None, "Target.getTargets", json!({})).await else { return Vec::new() };
+        let mut out = Vec::new();
+        for info in t["targetInfos"].as_array().into_iter().flatten() {
+            if info["type"] != "page" {
+                continue;
+            }
+            let id = info["targetId"].as_str().unwrap_or_default().to_string();
+            if let Ok(w) = self.cdp.call(None, "Browser.getWindowForTarget", json!({ "targetId": id })).await {
+                out.push((id, w["windowId"].clone()));
+            }
+        }
+        out
+    }
+
+    pub(crate) async fn reveal(&self, target_id: &str) -> Result<bool> {
+        if !self.hides_app() {
+            return Ok(false);
+        }
+        self.revealed.store(true, std::sync::atomic::Ordering::SeqCst);
+        *self.shown.lock() = Some(target_id.to_string());
+        for (id, wid) in self.page_windows().await {
+            if id != target_id {
+                let _ = self.cdp.call(None, "Browser.setWindowBounds", json!({ "windowId": wid, "bounds": { "windowState": "minimized" } })).await;
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(pid) = self.pid {
+            crate::macos::show(pid);
+        }
+        Ok(true)
+    }
+
+    pub(crate) async fn conceal(&self) -> Result<bool> {
+        if !self.hides_app() {
+            return Ok(false);
+        }
+        self.revealed.store(false, std::sync::atomic::Ordering::SeqCst);
+        *self.shown.lock() = None;
+        self.keep_hidden();
+        Ok(true)
+    }
+
+    pub(crate) async fn page_closed(&self, target_id: &str) {
+        let was_shown = self.shown.lock().as_deref() == Some(target_id);
+        if was_shown {
+            let _ = self.conceal().await;
+        }
     }
 
     pub fn mode(&self) -> BrowserMode {
@@ -212,12 +327,27 @@ impl Browser {
 
     /// Abre uma nova aba isolada em sua própria janela.
     pub async fn new_page(self: &Arc<Self>) -> Result<Arc<Page>> {
+        self.new_page_in(None).await
+    }
+
+    pub async fn new_isolated_page(self: &Arc<Self>) -> Result<Arc<Page>> {
+        let ctx = self.cdp.call(None, "Target.createBrowserContext", json!({ "disposeOnDetach": true })).await?;
+        let id = ctx["browserContextId"].as_str().ok_or_else(|| anyhow!("createBrowserContext sem id"))?.to_string();
+        self.new_page_in(Some(id)).await
+    }
+
+    async fn new_page_in(self: &Arc<Self>, context: Option<String>) -> Result<Arc<Page>> {
         let mut params = json!({ "url": "about:blank" });
+        if let Some(c) = &context {
+            params["browserContextId"] = json!(c);
+        }
         if self.opts.mode != BrowserMode::Headless {
             params["newWindow"] = json!(true);
             if self.opts.mode == BrowserMode::Hidden {
-                params["left"] = json!(HIDDEN_POS.0);
-                params["top"] = json!(HIDDEN_POS.1);
+                if !self.hides_app() {
+                    params["left"] = json!(HIDDEN_POS.0);
+                    params["top"] = json!(HIDDEN_POS.1);
+                }
                 params["width"] = json!(WINDOW_SIZE.0);
                 params["height"] = json!(WINDOW_SIZE.1);
             }
@@ -229,12 +359,18 @@ impl Browser {
             .call(None, "Target.attachToTarget", json!({ "targetId": target_id, "flatten": true }))
             .await?;
         let session = attached["sessionId"].as_str().ok_or_else(|| anyhow!("attach sem sessionId"))?.to_string();
-        let page = Arc::new(Page::new(self.clone(), session, target_id));
+        self.keep_hidden();
+        let old = std::mem::take(&mut *self.startup.lock());
+        for id in old {
+            let _ = self.cdp.call(None, "Target.closeTarget", json!({ "targetId": id })).await;
+        }
+        let page = Arc::new(Page::new(self.clone(), session, target_id, context));
         page.init().await?;
         Ok(page)
     }
 
     pub async fn close(&self) {
+        tracing::info!(pid = ?self.pid, "fechando navegador");
         let _ = self
             .cdp
             .call_timeout(None, "Browser.close", json!({}), Duration::from_secs(5))
@@ -242,7 +378,90 @@ impl Browser {
         if let Some(mut child) = self.child.lock().await.take() {
             let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
             let _ = child.kill().await;
+        } else if let Some(pid) = self.pid {
+            let start = Instant::now();
+            while pid_alive(pid) && start.elapsed() < Duration::from_secs(3) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            kill_pid(pid);
         }
+    }
+}
+
+impl Drop for Browser {
+    fn drop(&mut self) {
+        if self.child.get_mut().is_none() {
+            if let Some(pid) = self.pid {
+                kill_pid(pid);
+            }
+        }
+    }
+}
+
+fn spawn(exe: &Path, args: &[String], hides_app: bool) -> Result<(Option<Child>, Option<u32>)> {
+    #[cfg(target_os = "macos")]
+    if hides_app {
+        if let Some(bundle) = exe.ancestors().find(|p| p.extension().is_some_and(|e| e == "app")) {
+            let ok = std::process::Command::new("open")
+                .args(["-n", "-g", "-j", "-a"])
+                .arg(bundle)
+                .arg("--args")
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if ok {
+                return Ok((None, None));
+            }
+        }
+    }
+    let _ = hides_app;
+    let child = Command::new(exe)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("falha ao iniciar {}", exe.display()))?;
+    let pid = child.id();
+    Ok((Some(child), pid))
+}
+
+async fn page_targets(cdp: &Cdp) -> Vec<String> {
+    let Ok(t) = cdp.call(None, "Target.getTargets", json!({})).await else { return Vec::new() };
+    t["targetInfos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|i| i["type"] == "page")
+        .filter_map(|i| i["targetId"].as_str().map(String::from))
+        .collect()
+}
+
+fn find_pid(profile: &Path) -> Option<u32> {
+    if cfg!(windows) {
+        return None;
+    }
+    let out = std::process::Command::new("ps").args(["-axww", "-o", "pid=,args="]).output().ok()?;
+    let needle = format!("--user-data-dir={}", profile.display());
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find(|l| l.contains(&needle) && !l.contains("--type="))
+        .and_then(|l| l.split_whitespace().next()?.parse().ok())
+}
+
+fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("kill").args(["-0", &pid.to_string()]).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+}
+
+fn kill_pid(pid: u32) {
+    if cfg!(windows) {
+        let _ = std::process::Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status();
+    } else if pid_alive(pid) {
+        let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
     }
 }
 

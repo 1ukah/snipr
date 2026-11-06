@@ -23,3 +23,7 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# Interface
+ui/node_modules
+ui/dist

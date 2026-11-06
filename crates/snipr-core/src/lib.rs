@@ -5,7 +5,7 @@
 //! `SearchEvent`s. Nada aqui depende de interface gráfica.
 
 mod agent;
-mod claude_code;
+pub mod cli;
 pub mod config;
 mod engine;
 mod mcp;
@@ -15,8 +15,9 @@ pub mod sites;
 mod tools;
 pub mod types;
 
-pub use config::{ProviderKind, Settings};
+pub use cli::CliStatus;
+pub use config::{AiSettings, AuthMode, Provider, SessionState, Settings, Theme};
 pub use engine::{Engine, EventSink};
-pub use sites::Site;
+pub use sites::{Site, Suggestion};
 pub use snipr_browser::BrowserMode;
 pub use types::*;

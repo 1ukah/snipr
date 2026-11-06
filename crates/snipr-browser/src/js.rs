@@ -151,7 +151,7 @@ pub const EXTRACT_LISTINGS: &str = r#"
     const old = [...box.querySelectorAll('s, del, [class*="old"], [class*="previous"], [class*="original"]')]
       .map((e) => clean(e.innerText)).filter((t) => HAS_PRICE.test(t)).slice(0, 2);
     const extra = text.replace(title, '').replace(PRICE, ' ').replace(/\s+/g, ' ').trim().slice(0, 170);
-    cards.push({ title: title.slice(0, 160), prices, old, url, extra });
+    cards.push({ title: title.slice(0, 160), prices, old, url, extra, intl: isIntl(box) });
   }
   // 3) Fallback: há preços, mas nenhum card expõe link próprio (ex.: Shopee usa
   //    cliques via JS). Devolve os cards mesmo assim, marcados como "sem link".
@@ -172,12 +172,18 @@ pub const EXTRACT_LISTINGS: &str = r#"
       const title = t.split('\n').map(clean).filter((l) => l.length >= 15 && !HAS_PRICE.test(l)).sort((a, b) => b.length - a.length)[0];
       if (!title) continue;
       const prices = [...new Set((text.match(PRICE) || []).map((x) => x.replace(/\s+/g, ' ')))].slice(0, 4);
-      cards.push({ title: title.slice(0, 160), prices, old: [], url: 'SEM LINK (clique no card para obter)', extra: text.replace(title, '').replace(PRICE, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) });
+      cards.push({ title: title.slice(0, 160), prices, old: [], url: 'SEM LINK (clique no card para obter)', extra: text.replace(title, '').replace(PRICE, ' ').replace(/\s+/g, ' ').trim().slice(0, 120), intl: isIntl(box) });
     }
+  }
+  function isIntl(box) {
+    const INTL = /\binternaciona(l|is)\b|\bimportad[oa]s?\b|envio do exterior|enviado do exterior|(envio|enviado|enviada|chega|despachado) (de|da|do|dos) (china|eua|estados unidos|hong kong|exterior)|\binternational\b/i;
+    const labels = [...box.querySelectorAll('img[alt], [aria-label], [title]')]
+      .map((e) => e.getAttribute('alt') || e.getAttribute('aria-label') || e.getAttribute('title') || '').join(' ');
+    return INTL.test(`${box.innerText || ''} ${labels}`);
   }
   if (!cards.length) return `Nenhum card com preço encontrado em ${location.href}. Tente snapshot, scroll, ou read_text.`;
   return `URL: ${location.href}\n${cards.length} cards:\n` + cards.map((c, i) =>
-    `#${i + 1} | ${c.prices.join(' / ')}${c.old.length ? ' (riscado: ' + c.old.join(', ') + ')' : ''} | ${c.title} | ${c.url}${c.extra ? ' | ' + c.extra : ''}`
+    `#${i + 1} | ${c.prices.join(' / ')}${c.old.length ? ' (riscado: ' + c.old.join(', ') + ')' : ''}${c.intl ? ' | INTERNACIONAL' : ''} | ${c.title} | ${c.url}${c.extra ? ' | ' + c.extra : ''}`
   ).join('\n');
 }
 
