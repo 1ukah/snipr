@@ -236,12 +236,12 @@ fn main() {
             open_login,
             close_login,
         ])
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                let engine = window.state::<AppState>().engine.clone();
+        .build(tauri::generate_context!())
+        .expect("erro ao iniciar o Snipr")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                let engine = app.state::<AppState>().engine.clone();
                 tauri::async_runtime::block_on(engine.shutdown());
             }
-        })
-        .run(tauri::generate_context!())
-        .expect("erro ao iniciar o Snipr");
+        });
 }

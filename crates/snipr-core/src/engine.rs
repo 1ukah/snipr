@@ -298,7 +298,7 @@ impl Engine {
 
     // ---------- lojas ----------
 
-    pub async fn add_site(&self, url: &str, name: Option<String>, manual: bool) -> Result<Site> {
+    pub async fn add_site(self: &Arc<Self>, url: &str, name: Option<String>, manual: bool) -> Result<Site> {
         let raw = url.trim();
         let full = if raw.starts_with("http://") || raw.starts_with("https://") { raw.to_string() } else { format!("https://{raw}") };
         let parsed = url::Url::parse(&full).map_err(|_| anyhow!("Digite uma URL válida. Exemplo: https://www.loja.com.br"))?;
@@ -377,7 +377,7 @@ impl Engine {
         Ok(())
     }
 
-    async fn probe_site(&self, url: &str) -> Result<(bool, String, String)> {
+    async fn probe_site(self: &Arc<Self>, url: &str) -> Result<(bool, String, String)> {
         const JS: &str = r#"(() => {
             const path = (location.pathname + location.search).toLowerCase();
             const wall = /(^|[\/_.?=-])(login|signin|sign-in|entrar|acesso|auth)([\/_.?=&-]|$)/.test(path)
@@ -419,7 +419,7 @@ impl Engine {
         r
     }
 
-    pub async fn check_site_login(&self, id: &str) -> Result<Site> {
+    pub async fn check_site_login(self: &Arc<Self>, id: &str) -> Result<Site> {
         let site = self.sites().into_iter().find(|s| s.id == id).ok_or_else(|| anyhow!("loja desconhecida"))?;
         let (requires_login, search_url, _) = self.probe_site(&site.home()).await?;
         let id = site.id.clone();
@@ -491,7 +491,7 @@ impl Engine {
 
     /// Abre o site numa janela visível para o usuário fazer login uma vez.
     /// A sessão fica salva no perfil do Snipr.
-    pub async fn open_login(&self, site_id: &str) -> Result<()> {
+    pub async fn open_login(self: &Arc<Self>, site_id: &str) -> Result<()> {
         if self.settings().browser_mode == BrowserMode::Headless {
             bail!("O login não funciona no modo headless. Mude o navegador para Oculto ou Visível em Ajustes.");
         }
@@ -514,7 +514,7 @@ impl Engine {
         r
     }
 
-    pub async fn close_login(&self, done: bool) {
+    pub async fn close_login(self: &Arc<Self>, done: bool) {
         if let Some((site, p)) = self.login_page.lock().await.take() {
             p.close().await;
             self.release();
@@ -524,9 +524,10 @@ impl Engine {
         }
     }
 
-    fn release(&self) {
+    fn release(self: &Arc<Self>) {
         if self.active.fetch_sub(1, Ordering::SeqCst) == 1 {
             self.generation.fetch_add(1, Ordering::SeqCst);
+            self.schedule_idle_close();
         }
     }
 
@@ -609,7 +610,6 @@ impl Engine {
             });
             me.jobs.lock().remove(&job_id);
             me.release();
-            me.schedule_idle_close();
         });
         Ok(job)
     }
