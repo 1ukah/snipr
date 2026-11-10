@@ -10,7 +10,11 @@
 //! 5. O agent (IA com ferramentas) só entra em lojas que o Snipr não
 //!    consegue ler sozinho.
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::{HashSet, VecDeque},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Result};
 use parking_lot::Mutex;
@@ -256,15 +260,18 @@ impl Engine {
             cookie = Some(self.cookie_for(ctx, site).await?);
         }
         let (mut all, mut no_results) = (Vec::<Card>::new(), false);
-        for (i, term) in terms(ctx, site).iter().enumerate() {
-            if i > 0 {
+        let mut queue = Queue::new(terms(ctx, site), 4);
+        let mut first = true;
+        while let Some((term, retry)) = queue.next() {
+            if !first {
                 // Uma pessoa não dispara buscas em sequência instantânea.
                 tokio::time::sleep(Duration::from_millis(snipr_rand(400, 900))).await;
             }
-            ctx.sink.log(agent, format!("buscando \"{term}\" (etapa {})", stage.label()));
+            first = false;
+            ctx.sink.log(agent, format!("buscando \"{term}\" (etapa {}){}", stage.label(), if retry { ", mais curto" } else { "" }));
             let url = match site.api {
-                Some(Api::Vtex) => vtex_url(site, term),
-                None => site.build_search_url(term),
+                Some(Api::Vtex) => vtex_url(site, &term),
+                None => site.build_search_url(&term),
             };
             let mut page = self.fetcher.get(stage, &url, cookie.as_deref()).await?;
             if let Some(why) = fetch::blocked(&page) {
@@ -283,12 +290,12 @@ impl Engine {
                 Some(Api::Vtex) => parse::cards_from_vtex(&page.body, MAX_CANDIDATES),
                 None => parse::cards_from_html(&page.body, &page.url, MAX_CANDIDATES, Some(site.json_url.as_str()).filter(|j| !j.is_empty())),
             };
+            queue.after(&term, retry, &ctx.plan.product, &cards);
             if cards.is_empty() {
-                if fetch::says_no_results(&page.body) {
-                    no_results = true;
-                    continue;
-                }
-                return Ok(Got::Unreadable);
+                // Um termo sem cards (ex.: outra marca na loja de uma marca) não
+                // invalida os outros: a etapa só falha se nenhum termo render.
+                no_results |= fetch::says_no_results(&page.body);
+                continue;
             }
             merge(&mut all, cards);
         }
@@ -345,10 +352,13 @@ impl Engine {
         let lease = browser.lease().await?;
         let tools = self.toolbox(ctx, agent, site, lease.page().clone());
         let (mut all, mut no_results) = (Vec::<Card>::new(), false);
-        // Cada busca no Chrome custa CPU: dois termos bastam.
-        for term in terms(ctx, site).iter().take(2) {
-            ctx.sink.log(agent, format!("buscando \"{term}\" (etapa D)"));
-            let msg = tools.navigate(&site.build_search_url(term)).await?;
+        // Um termo por alternativa do plano (no máximo 4): cortar termos aqui
+        // deixa alternativas inteiras sem busca. Cada página no Chrome custa
+        // CPU: no máximo uma busca mais curta.
+        let mut queue = Queue::new(terms(ctx, site), 1);
+        while let Some((term, retry)) = queue.next() {
+            ctx.sink.log(agent, format!("buscando \"{term}\" (etapa D){}", if retry { ", mais curto" } else { "" }));
+            let msg = tools.navigate(&site.build_search_url(&term)).await?;
             if !msg.starts_with("Página aberta") {
                 bail!("{}", msg.lines().next().unwrap_or_default());
             }
@@ -361,12 +371,10 @@ impl Engine {
                     cards = more;
                 }
             }
+            queue.after(&term, retry, &ctx.plan.product, &cards);
             if cards.is_empty() {
-                if fetch::says_no_results(&lease.read_text(4000).await.unwrap_or_default()) {
-                    no_results = true;
-                    continue;
-                }
-                return Ok(Got::Unreadable);
+                no_results |= fetch::says_no_results(&lease.read_text(4000).await.unwrap_or_default());
+                continue;
             }
             merge(&mut all, cards);
         }
@@ -400,24 +408,24 @@ impl Engine {
             ctx.plan.alternatives.join(" "),
             ctx.plan.search_terms.join(" ")
         ));
+        let groups = parse::plan_groups(&ctx.plan.product, &ctx.plan.alternatives, &ctx.plan.search_terms);
+        let strict = !ctx.plan.alternatives.is_empty();
         let max = ctx.req.max_price;
         let mut cand: Vec<(usize, Card)> = Vec::new();
         let mut rows = Vec::new();
         for (bi, b) in batches.iter().enumerate() {
-            let mut n = 0;
-            for card in &b.cards {
-                if n >= MAX_CANDIDATES {
-                    break;
-                }
-                let title = parse::fold(&card.title);
-                if title.starts_with("compro") || title.starts_with("procuro") || !parse::mentions(card, &words) {
-                    continue;
-                }
-                let Some(min) = parse::sorted_prices(card).first().copied() else { continue };
-                if min < 5.0 || max.is_some_and(|m| min > m) {
-                    continue;
-                }
-                n += 1;
+            let usable: Vec<&Card> = b
+                .cards
+                .iter()
+                .filter(|card| {
+                    let title = parse::fold(&card.title);
+                    let min = parse::sorted_prices(card).first().copied();
+                    !title.starts_with("compro")
+                        && !title.starts_with("procuro")
+                        && min.is_some_and(|min| min >= 5.0 && !max.is_some_and(|m| min > m))
+                })
+                .collect();
+            for card in parse::shortlist(&usable, &groups, &ctx.plan.product, strict, &words, MAX_CANDIDATES) {
                 rows.push(prompts::judge_row(cand.len() + 1, &b.site.name, card));
                 cand.push((bi, card.clone()));
             }
@@ -599,6 +607,36 @@ fn terms(ctx: &Ctx, site: &Site) -> Vec<String> {
     out
 }
 
+/// Buscas de uma loja: os termos do plano e, no fim, as versões mais curtas
+/// dos termos cujos resultados não citam o modelo.
+struct Queue {
+    todo: VecDeque<(String, bool)>,
+    seen: Vec<String>,
+    retries: usize,
+}
+
+impl Queue {
+    fn new(terms: Vec<String>, retries: usize) -> Self {
+        Self { seen: terms.clone(), todo: terms.into_iter().map(|t| (t, false)).collect(), retries }
+    }
+
+    /// (termo, é uma busca mais curta)
+    fn next(&mut self) -> Option<(String, bool)> {
+        self.todo.pop_front()
+    }
+
+    fn after(&mut self, term: &str, retry: bool, product: &str, cards: &[Card]) {
+        if retry || self.retries == 0 {
+            return;
+        }
+        if let Some(q) = parse::narrower_term(term, product, cards).filter(|q| !self.seen.iter().any(|s| s.eq_ignore_ascii_case(q))) {
+            self.retries -= 1;
+            self.seen.push(q.clone());
+            self.todo.push_back((q, true));
+        }
+    }
+}
+
 /// Na loja da própria marca, o nome da marca casa com todo o catálogo e empurra
 /// o modelo pedido para fora da primeira página ("XT Racer X-Pro" → "X-Pro").
 fn without_store_name(term: &str, site: &Site) -> String {
@@ -667,6 +705,73 @@ mod tests {
         assert_eq!(without_store_name("cadeira XT Racer X-Pro", &site("KaBuM!", "kabum.com.br")), "cadeira XT Racer X-Pro");
     }
 
+    /// Diagnóstico: lê as lojas com um plano fixo, sem IA, e mostra o que iria ao filtro.
+    ///   SNIPR_TEST_SETTINGS=<settings.json> SNIPR_TEST_SITES=kabum,x-dt3-com cargo test -p snipr-core --release coleta_sem_ia -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn coleta_sem_ia() {
+        let _ = tracing_subscriber::fmt().with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".into())).try_init();
+        let tmp = std::env::temp_dir().join("snipr-collect-test");
+        std::fs::create_dir_all(&tmp).unwrap();
+        if let Ok(src) = std::env::var("SNIPR_TEST_SETTINGS") {
+            std::fs::copy(src, tmp.join("settings.json")).unwrap();
+        }
+        let paths = Paths { config_file: tmp.join("settings.json"), profile_dir: tmp.join("profile"), work_dir: tmp.join("agents") };
+        let engine = Engine::with_paths(paths).await.unwrap();
+        let settings = engine.settings();
+        let plan = SearchPlan {
+            product: "cadeira".into(),
+            alternatives: vec!["ThunderX3 Core XXL".into(), "DT3 Royce".into(), "XT Office X-Pro".into(), "DT3 Forst".into()],
+            search_terms: vec!["cadeira ThunderX3 Core XXL".into(), "cadeira DT3 Royce".into(), "cadeira XT Office X-Pro".into(), "cadeira DT3 Forst".into()],
+            ..Default::default()
+        };
+        let only = std::env::var("SNIPR_TEST_SITES").unwrap_or_default();
+        let sites: Vec<Site> = settings.all_sites().into_iter().filter(|s| settings.enabled_sites.contains(&s.id)).filter(|s| only.is_empty() || only.split(',').any(|o| s.id == o)).collect();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        let req = SearchRequest { query: "cadeira".into(), condition: ConditionFilter::Any, sites: vec![], max_price: None, plan: None };
+        let ctx = Arc::new(Ctx {
+            job: "t".into(),
+            sink: Arc::new(Sink { job: "t".into(), events: tx.clone(), listings: Default::default(), filter: req.condition, max_price: None }),
+            req,
+            plan,
+            chrome: Arc::new(Semaphore::new(4)),
+            all_sites: settings.all_sites(),
+            settings,
+            events: tx,
+            cancel: CancellationToken::new(),
+        });
+        let words = parse::tokens(&format!("{} {} {}", ctx.plan.product, ctx.plan.alternatives.join(" "), ctx.plan.search_terms.join(" ")));
+        let mut set = tokio::task::JoinSet::new();
+        for site in sites {
+            let (me, ctx, words) = (engine.clone(), ctx.clone(), words.clone());
+            set.spawn(async move {
+                let t = std::time::Instant::now();
+                let r = me.collect(&ctx, &site, &site.id).await;
+                let mut out = format!("\n=== {} ({:?}) termos {:?} em {:.1}s\n", site.name, site.stage, terms(&ctx, &site), t.elapsed().as_secs_f64());
+                match r {
+                    Ok(Collected::NeedsAgent) => out.push_str("  -> agent\n"),
+                    Ok(Collected::Cards(cards, stage)) => {
+                        let groups = parse::plan_groups(&ctx.plan.product, &ctx.plan.alternatives, &ctx.plan.search_terms);
+                        let refs: Vec<&Card> = cards.iter().collect();
+                        let short: Vec<String> = parse::shortlist(&refs, &groups, &ctx.plan.product, true, &words, MAX_CANDIDATES).iter().map(|c| c.url.clone() + &c.title).collect();
+                        out.push_str(&format!("  etapa {} · {} cards · {} ao filtro\n", stage.label(), cards.len(), short.len()));
+                        for (i, c) in cards.iter().enumerate() {
+                            let judged = short.contains(&(c.url.clone() + &c.title));
+                            out.push_str(&format!("  {:>2} {} {:?} {}\n", i, if judged { "J" } else { " " }, parse::sorted_prices(c).first(), c.title.chars().take(90).collect::<String>()));
+                        }
+                    }
+                    Err(e) => out.push_str(&format!("  erro: {e:#}\n")),
+                }
+                out
+            });
+        }
+        while let Some(Ok(s)) = set.join_next().await {
+            println!("{s}");
+        }
+        engine.shutdown().await;
+    }
+
     /// Busca completa com a IA do login do Claude Code (usa a IA):
     ///   SNIPR_TEST_PROFILE=<cópia do perfil> SNIPR_TEST_SITES=kabum,terabyte cargo test -p snipr-core --release busca_ponta_a_ponta -- --ignored --nocapture
     #[tokio::test]
@@ -676,13 +781,21 @@ mod tests {
         let tmp = std::env::temp_dir().join("snipr-search-test");
         std::fs::create_dir_all(&tmp).unwrap();
         let profile = std::env::var("SNIPR_TEST_PROFILE").map(std::path::PathBuf::from).unwrap_or_else(|_| tmp.join("profile"));
-        let mut s = Settings::default();
-        s.ai.mode = AuthMode::Login;
-        s.ai.login_provider = Provider::Anthropic;
         let paths = Paths { config_file: tmp.join("settings.json"), profile_dir: profile, work_dir: tmp.join("agents") };
-        paths.save_settings(&s).unwrap();
+        // SNIPR_TEST_SETTINGS=<settings.json>: usa as lojas e etapas de um perfil real.
+        let given = std::env::var("SNIPR_TEST_SETTINGS").ok();
+        if let Some(src) = &given {
+            std::fs::copy(src, &paths.config_file).unwrap();
+        } else {
+            let mut s = Settings::default();
+            s.ai.mode = AuthMode::Login;
+            s.ai.login_provider = Provider::Anthropic;
+            paths.save_settings(&s).unwrap();
+        }
         let engine = Engine::with_paths(paths).await.unwrap();
-        let sites: Vec<String> = std::env::var("SNIPR_TEST_SITES").unwrap_or_else(|_| "kabum,terabyte,magalu,mercadolivre".into()).split(',').map(String::from).collect();
+        let default_sites = if given.is_some() { String::new() } else { "kabum,terabyte,magalu,mercadolivre".into() };
+        let sites: Vec<String> =
+            std::env::var("SNIPR_TEST_SITES").unwrap_or(default_sites).split(',').filter(|s| !s.is_empty()).map(String::from).collect();
         let query = std::env::var("SNIPR_TEST_QUERY").unwrap_or_else(|_| "monitor 27 polegadas 144hz até 1200".into());
         let (tx, mut rx) = mpsc::unbounded_channel();
         let started = std::time::Instant::now();

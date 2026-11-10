@@ -30,7 +30,7 @@ Responda somente com um objeto JSON válido, sem texto antes ou depois, neste fo
 {"product": "...", "alternatives": ["..."], "requirements": ["..."], "exclude": ["..."], "condition": null, "max_price": null, "search_terms": ["..."]}
 
 Regras:
-- product: o tipo de produto em poucas palavras, em português (ex.: "placa-mãe", "cadeira de escritório").
+- product: o tipo de produto em poucas palavras, em português, como o usuário disse (ex.: "placa-mãe", "cadeira"). Não acrescente categorias que o usuário não disse (ex.: "gamer", "de escritório"): as alternativas podem ser de categorias diferentes.
 - alternatives: marcas ou modelos que o usuário aceita como alternativas, por exemplo os ligados por "ou". Use lista vazia se houver um único produto.
 - requirements: especificações obrigatórias, curtas e normalizadas (ex.: "AM5", "Wi-Fi", "4 slots de RAM", "DDR5").
 - exclude: o que o usuário diz que não quer. Lista vazia se não houver.
@@ -154,6 +154,7 @@ pub fn task(req: &SearchRequest, plan: &SearchPlan, sites: &[Site]) -> String {
 pub const JUDGE: &str = r#"Você filtra anúncios para o Snipr, um comparador de preços de lojas brasileiras.
 Você recebe um plano de busca e uma lista de anúncios, um por linha: id | loja | preços (do menor para o maior) | título | detalhes.
 Um anúncio atende ao plano quando é do tipo de produto pedido, é uma das alternativas (se houver) e cumpre todos os requisitos.
+Com alternativas, o modelo manda: o anúncio de uma alternativa atende mesmo que a loja o descreva com outra categoria (ex.: "gamer" ou "escritório"), e cores ou acabamentos diferentes do mesmo modelo atendem. Outro modelo da mesma marca ou linha não atende (ex.: "Core Smart" não é "Core XXL").
 Descarte peças, acessórios, capas, modelos parecidos mas diferentes, anúncios de "compro", kits que não são o item, esgotados e preços simbólicos.
 
 Responda somente com um objeto JSON válido, sem texto antes ou depois:

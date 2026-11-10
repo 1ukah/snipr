@@ -76,7 +76,7 @@ pub const EXTRACT_LISTINGS: &str = r#"
   const HAS_PRICE = /R\$\s*\d/;
   const TRACK = /click|clicks|clk|publicidade|adclick|redirect|\/count\b|doubleclick|taboola|outbrain|criteo|rtb-|\/ads?\//i;
   // Rótulos genéricos que não são o nome do produto (alt de imagem, aria-label de preço…).
-  const JUNK = /^(imagem|foto|image|picture|pre[çc]o|price|parte (de tr[áa]s|da frente)|frente|verso|front|back|an[úu]ncio|patrocinado|sponsored|adicionar|comprar|ver mais|ver detalhes|favoritar|frete|entrega|em at[ée]|at[ée] \d|\d+\s*x\b|ou \d|sem juros|no pix|[àa] vista|mais op[çc][õo]es)/i;
+  const JUNK = /^(imagem|foto|image|picture|pre[çc]o|price|parte (de tr[áa]s|da frente)|frente|verso|front|back|an[úu]ncio|patrocinado|sponsored|adicionar|comprar|ver mais|ver detalhes|favoritar|frete|entrega|em at[ée]|at[ée] \d|\d+\s*x\b|ou \d|sem juros|no pix|[àa] vista|mais op[çc][õo]es|off\b|oferta (black|rel[âa]mpago|do dia)|\(?\d+ ofertas|compre produtos de marcas)/i;
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const norm = (s) => clean(s).replace(/R\$\s*/g, 'R$ ').replace(/(\d)\s*,\s*(\d{2})/g, '$1,$2');
   const here = location.origin + location.pathname;
@@ -184,12 +184,15 @@ pub const EXTRACT_LISTINGS: &str = r#"
     // Título: headings e atributos title/alt valem mais; depois o texto mais longo sem preço.
     let title = '', best = -1;
     for (const x of [link[0], ...box.querySelectorAll('*')]) {
+      if (x.closest('script, style, noscript, template, svg')) continue;
       let t = clean(x.getAttribute('title') || (x.tagName === 'IMG' ? x.getAttribute('alt') : '')), bonus = 30;
       if (t && JUNK.test(t)) t = '';
       if (!t && /^H[1-6]$/.test(x.tagName)) { t = clean(x.innerText); bonus = 60; }
       if (!t && x.children.length <= 2) { t = clean(x.innerText); bonus = 0; }
       t = t.replace(/^an[úu]ncio patrocinado\s*[–-]?\s*/i, '');
       if (!t || t.length < 8 || t.length > 200 || HAS_PRICE.test(t) || JUNK.test(t)) continue;
+      // Elemento oculto devolve o texto cru, CSS incluído (ex.: widgets de avaliação).
+      if (/\{[^}]*:[^}]*\}/.test(t)) continue;
       const score = t.length + bonus;
       if (score > best) { best = score; title = t; }
     }

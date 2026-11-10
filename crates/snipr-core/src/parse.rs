@@ -20,7 +20,7 @@ static TRACK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)click|clicks|clk|publicidade|adclick|redirect|/count\b|doubleclick|taboola|outbrain|criteo|rtb-|/ads?/").unwrap()
 });
 static JUNK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^(imagem|foto|image|picture|pre[çc]o|price|parte (de tr[áa]s|da frente)|frente|verso|front|back|an[úu]ncio|patrocinado|sponsored|adicionar|comprar|ver mais|ver detalhes|favoritar|frete|entrega|em at[ée]|at[ée] \d|\d+\s*x\b|ou \d|sem juros|no pix|[àa] vista|mais op[çc][õo]es)").unwrap()
+    Regex::new(r"(?i)^(imagem|foto|image|picture|pre[çc]o|price|parte (de tr[áa]s|da frente)|frente|verso|front|back|an[úu]ncio|patrocinado|sponsored|adicionar|comprar|ver mais|ver detalhes|favoritar|frete|entrega|em at[ée]|at[ée] \d|\d+\s*x\b|ou \d|sem juros|no pix|[àa] vista|mais op[çc][õo]es|off\b|oferta (black|rel[âa]mpago|do dia)|\(?\d+ ofertas|compre produtos de marcas)").unwrap()
 });
 static STRONG_PATH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\d{5,}|/dp/|/p/|produto|item|MLB").unwrap());
 static WEAK_PATH: LazyLock<Regex> = LazyLock::new(|| {
@@ -456,6 +456,9 @@ fn dom_cards(doc: &Html, ctx: &Ctx, max: usize) -> Vec<Card> {
         let (mut title, mut best) = (String::new(), -1i64);
         for x in std::iter::once(link_a).chain(b.descendants()) {
             let Some(el) = x.value().as_element() else { continue };
+            if SKIP.contains(&el.name()) || x.ancestors().any(|a| SKIP.contains(&tag(a))) {
+                continue;
+            }
             let mut t = clean(el.attr("title").or(if el.name() == "img" { el.attr("alt") } else { None }).unwrap_or_default());
             let mut bonus = 30;
             if JUNK.is_match(&t) {
@@ -721,6 +724,131 @@ pub fn mentions(card: &Card, words: &[String]) -> bool {
     words.iter().any(|w| hay.contains(w.as_str()))
 }
 
+/// Palavras do texto como aparecem num título compactado: "X-Pro" → "xpro".
+fn keys(s: &str) -> Vec<String> {
+    const VAGUE: &[&str] = &["modelo", "marca", "linha", "serie", "versao", "tipo", "cor"];
+    let mut out: Vec<String> = Vec::new();
+    for w in fold(s).split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '/' | '(' | ')' | '+' | '|')) {
+        let w: String = w.chars().filter(|c| c.is_alphanumeric()).collect();
+        let digit = w.chars().any(|c| c.is_ascii_digit());
+        if (w.len() >= 3 || (digit && w.len() >= 2)) && !STOP.contains(&w.as_str()) && !VAGUE.contains(&w.as_str()) && !out.contains(&w) {
+            out.push(w);
+        }
+    }
+    out
+}
+
+fn compact(s: &str) -> String {
+    fold(s).chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
+/// Palavras que distinguem cada alternativa do plano (sem as do tipo de
+/// produto). Sem alternativas, cada termo de busca vira um grupo.
+pub fn plan_groups(product: &str, alternatives: &[String], terms: &[String]) -> Vec<Vec<String>> {
+    let generic: HashSet<String> = keys(product).into_iter().flat_map(|k| [k.trim_end_matches('s').to_string(), k]).collect();
+    let source = if alternatives.is_empty() { terms } else { alternatives };
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    for g in source.iter().map(|a| keys(a).into_iter().filter(|k| !generic.contains(k) && !generic.contains(k.trim_end_matches('s'))).collect::<Vec<_>>()) {
+        if !g.is_empty() && !groups.contains(&g) {
+            groups.push(g);
+        }
+    }
+    groups
+}
+
+/// Escolhe até `max` cards de uma loja para o filtro da IA. Cada alternativa
+/// do plano recebe sua vez (os cards da primeira busca não ocupam todas as
+/// vagas) e só entram cards que citam a alternativa. Palavras que aparecem em
+/// quase todos os cards da loja (ex.: a marca, na loja da marca) valem menos.
+/// Sem grupos, vale a regra antiga: citar alguma palavra do plano.
+///
+/// `strict` (o plano tem alternativas, isto é, modelos): o card precisa citar
+/// a maior parte da alternativa. Sem alternativas, os grupos vêm dos termos de
+/// busca, que trazem especificações escritas de outro jeito nos títulos.
+///
+/// Quando boa parte dos cards da loja cita o tipo de produto ("cadeira"), um
+/// card que não cita, e só cita uma palavra do modelo, é de outro tipo (ex.:
+/// "Royce" traz carteiras, "XXL" traz camisetas). Se os títulos não usam a
+/// palavra (ex.: "celular" × "Smartphone"), a regra não vale.
+pub fn shortlist<'a>(cards: &[&'a Card], groups: &[Vec<String>], product: &str, strict: bool, words: &[String], max: usize) -> Vec<&'a Card> {
+    if groups.is_empty() {
+        return cards.iter().copied().filter(|c| mentions(c, words)).take(max).collect();
+    }
+    let all: Vec<String> = cards.iter().map(|c| compact(&format!("{} {}", c.title, c.extra))).collect();
+    let head = keys(product).into_iter().next().map(|k| k.trim_end_matches('s').to_string());
+    let typed = |h: &String| head.as_ref().is_none_or(|k| h.contains(k.as_str()));
+    let common = all.iter().filter(|h| typed(h)).count() * 100 >= all.len() * 15;
+    // Duas palavras do modelo bastam (sinônimos do tipo: "Smartphone" para "celular").
+    let named = |h: &String| groups.iter().any(|g| g.iter().filter(|k| h.contains(k.as_str())).count() >= 2);
+    let (cards, hay): (Vec<&'a Card>, Vec<String>) = cards.iter().copied().zip(all).filter(|(_, h)| !common || typed(h) || named(h)).unzip();
+    let n = cards.len() as f64;
+    let weight = |k: &str| {
+        let df = hay.iter().filter(|h| h.contains(k)).count().max(1) as f64;
+        (1.0 + n / df).ln()
+    };
+    let mut ranked: Vec<Vec<usize>> = Vec::new();
+    for g in groups {
+        let w: Vec<f64> = g.iter().map(|k| weight(k)).collect();
+        let total: f64 = w.iter().sum();
+        let mut scored: Vec<(usize, f64)> = hay
+            .iter()
+            .enumerate()
+            .map(|(i, h)| (i, g.iter().zip(&w).filter(|(k, _)| h.contains(k.as_str())).map(|(_, w)| w).sum::<f64>() / total))
+            .filter(|(_, s)| *s > 0.0)
+            .collect();
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        // Cards bem abaixo do melhor da alternativa são outro modelo (ex.: só a marca bate).
+        let best = scored.first().map(|s| s.1).unwrap_or(0.0);
+        let floor = if strict { 0.5f64.max(best * 0.5) } else { best * 0.5 };
+        ranked.push(scored.into_iter().filter(|(_, s)| *s >= floor).map(|(i, _)| i).collect());
+    }
+    let (mut out, mut taken) = (Vec::new(), HashSet::new());
+    let mut pos = vec![0usize; ranked.len()];
+    while out.len() < max {
+        let mut moved = false;
+        for (g, list) in ranked.iter().enumerate() {
+            while let Some(&i) = list.get(pos[g]) {
+                pos[g] += 1;
+                if taken.insert(i) {
+                    out.push(cards[i]);
+                    moved = true;
+                    break;
+                }
+            }
+            if out.len() >= max {
+                break;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    out
+}
+
+/// Busca mais curta para quando nenhum card do termo cita o modelo dele. Fica
+/// só com as palavras raras nos resultados: em lojas que buscam qualquer
+/// palavra, o resto casa com o catálogo todo ("cadeira XT Office X-Pro" na
+/// loja da XT → "X-Pro").
+pub fn narrower_term(term: &str, product: &str, cards: &[Card]) -> Option<String> {
+    let group = plan_groups(product, &[], &[term.to_string()]).pop()?;
+    let refs: Vec<&Card> = cards.iter().collect();
+    if !shortlist(&refs, std::slice::from_ref(&group), product, true, &[], 1).is_empty() {
+        return None;
+    }
+    let hay: Vec<String> = cards.iter().map(|c| compact(&format!("{} {}", c.title, c.extra))).collect();
+    let common = (hay.len() as f64 * 0.3).max(1.0);
+    let kept: Vec<&str> = term
+        .split_whitespace()
+        .filter(|w| {
+            let k = compact(w);
+            group.contains(&k) && (hay.iter().filter(|h| h.contains(&k)).count() as f64) < common
+        })
+        .collect();
+    let q = kept.join(" ");
+    (!q.is_empty() && !q.eq_ignore_ascii_case(term.trim())).then_some(q)
+}
+
 /// Fração dos cards que cita a busca.
 pub fn relevance(cards: &[Card], query: &str) -> f64 {
     let words = tokens(query);
@@ -801,6 +929,25 @@ mod tests {
     }
 
     #[test]
+    fn busca_mais_curta_quando_o_modelo_nao_aparece() {
+        let card = |t: &str| Card { title: t.into(), ..Default::default() };
+        let flood: Vec<Card> = (0..20).map(|i| card(&format!("Base Universal Para Cadeira Gamer E Office XT Racer {i}"))).collect();
+        assert_eq!(narrower_term("cadeira XT Office X-Pro", "cadeira", &flood).as_deref(), Some("X-Pro"));
+        let found = [card("Cadeira de Escritório Presidente X-Pro NR17 XT Office")];
+        assert_eq!(narrower_term("cadeira XT Office X-Pro", "cadeira", &found), None, "o modelo já apareceu");
+        assert_eq!(narrower_term("cadeira DT3 Forst", "cadeira", &[]).as_deref(), Some("DT3 Forst"), "sem cards: tira só o tipo");
+        assert_eq!(narrower_term("Forst", "cadeira", &[]), None, "nada mais curto");
+    }
+
+    #[test]
+    fn css_dentro_do_card_nao_vira_titulo() {
+        let html = r#"<body><div class="card"><style>#trustvox-new { display: none !important; } .product-stars-container { display: none }</style>
+            <a href="/produto/123456/cadeira-royce"><span>Cadeira Gamer DT3 Royce</span></a><span>R$ 2.474,90</span></div></body>"#;
+        let cards = cards_from_html(html, "https://loja.com.br/busca?q=royce", 10, None);
+        assert_eq!(cards[0].title, "Cadeira Gamer DT3 Royce");
+    }
+
+    #[test]
     fn le_json_embutido_e_aprende_o_link() {
         let html = r#"<script id="__NEXT_DATA__" type="application/json">{"props":{"data":[
             {"code":"111111","friendlyName":"monitor-lg-27","name":"Monitor LG 27 IPS 144Hz","price":"1299.99","priceWithDiscount":"1099.99","oldPrice":"0","available":"True"},
@@ -872,6 +1019,64 @@ mod tests {
         assert_eq!(tokens("Placa-mãe Gigabyte AM5 com Wi-Fi"), vec!["placa", "mae", "gigabyte", "am5"]);
         let card = Card { prices: vec!["R$ 941,16".into(), "R$ 799,99".into()], ..Default::default() };
         assert_eq!(sorted_prices(&card), vec![799.99, 941.16]);
+    }
+
+    #[test]
+    fn grupos_do_plano_tiram_o_tipo_de_produto() {
+        let alts = ["ThunderX3 Core XXL", "DT3 Royce", "XT Office X-Pro", "DT3 modelo Forst"].map(String::from);
+        let g = plan_groups("Cadeiras", &alts, &[]);
+        assert_eq!(g, vec![vec!["thunderx3", "core", "xxl"], vec!["dt3", "royce"], vec!["office", "xpro"], vec!["dt3", "forst"]]);
+        let terms = ["monitor 27 polegadas 144hz".to_string()];
+        assert_eq!(plan_groups("monitor", &[], &terms), vec![vec!["27", "polegadas", "144hz"]]);
+        assert!(plan_groups("air fryer", &[], &["air fryer".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn lista_curta_da_vez_a_cada_alternativa() {
+        let card = |t: &str| Card { title: t.into(), ..Default::default() };
+        // A primeira busca enche a página; os modelos das outras vêm depois.
+        let mut cards: Vec<Card> = (0..45).map(|i| card(&format!("Cadeira Gamer ThunderX3 Core Smart {i}"))).collect();
+        cards.push(card("Cadeira de Rodas Dobrável"));
+        cards.extend((0..10).map(|i| card(&format!("Cadeira Office DT3 Vita {i}"))));
+        cards.push(card("Cadeira Gamer DT3 Sports Royce Ashen"));
+        cards.push(card("Cadeira Office Xt Racer - X-pro Xto-003s"));
+        cards.push(card("Cadeira Gamer Thunderx3 Core Xxl Modern Azul"));
+        let refs: Vec<&Card> = cards.iter().collect();
+        let alts = ["ThunderX3 Core XXL", "DT3 Royce", "XT Office X-Pro", "DT3 Forst"].map(String::from);
+        let short = shortlist(&refs, &plan_groups("cadeira", &alts, &[]), "cadeira", true, &[], 12);
+        let titles: Vec<&str> = short.iter().map(|c| c.title.as_str()).collect();
+        assert!(short.len() <= 12);
+        assert_eq!(titles[0], "Cadeira Gamer Thunderx3 Core Xxl Modern Azul", "{titles:#?}");
+        assert!(titles.contains(&"Cadeira Gamer DT3 Sports Royce Ashen"), "{titles:#?}");
+        assert!(titles.contains(&"Cadeira Office Xt Racer - X-pro Xto-003s"), "{titles:#?}");
+        assert!(!titles.contains(&"Cadeira de Rodas Dobrável"));
+        assert!(!titles.iter().any(|t| t.contains("Vita")), "só a marca bate: é outro modelo: {titles:#?}");
+
+        // Sem alternativas, especificações que o título não cita não derrubam o card.
+        let monitors = [card("Monitor Gamer LG 27 IPS 144Hz"), card("Monitor AOC 24 75Hz"), card("Suporte de Mesa")];
+        let refs: Vec<&Card> = monitors.iter().collect();
+        let terms = ["monitor 27 polegadas 144hz".to_string()];
+        let short = shortlist(&refs, &plan_groups("monitor", &[], &terms), "monitor", false, &[], 10);
+        assert_eq!(short[0].title, "Monitor Gamer LG 27 IPS 144Hz");
+        assert!(!short.iter().any(|c| c.title.starts_with("Suporte")));
+
+        // A busca curta "Royce" traz outros produtos: sem "cadeira", ficam de fora.
+        let mixed = [card("Cadeira Gamer DT3 Royce Ashen"), card("Cadeira Gamer DT3 Nero"), card("Carteira de couro Royce"), card("Royce Leather Padfolio")];
+        let refs: Vec<&Card> = mixed.iter().collect();
+        let short = shortlist(&refs, &plan_groups("cadeira", &alts, &[]), "cadeira", true, &[], 10);
+        assert_eq!(short.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), vec!["Cadeira Gamer DT3 Royce Ashen"]);
+        // Títulos que não usam a palavra do tipo de produto: a regra não vale.
+        let phones = [card("Smartphone Samsung Galaxy S24 128GB"), card("Capa para Galaxy S23")];
+        let refs: Vec<&Card> = phones.iter().collect();
+        let alts = ["Samsung Galaxy S24".to_string()];
+        assert_eq!(shortlist(&refs, &plan_groups("celular", &alts, &[]), "celular", true, &[], 10).len(), 1);
+        // Mesmo quando a loja usa a palavra, o sinônimo com o modelo inteiro passa.
+        let phones = [card("Celular Samsung Galaxy A15"), card("Smartphone Samsung Galaxy S24 128GB"), card("Película S24")];
+        let refs: Vec<&Card> = phones.iter().collect();
+        let short = shortlist(&refs, &plan_groups("celular", &alts, &[]), "celular", true, &[], 10);
+        let titles: Vec<&str> = short.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(titles[0], "Smartphone Samsung Galaxy S24 128GB");
+        assert!(!titles.contains(&"Película S24"), "{titles:?}");
     }
 
     #[test]
