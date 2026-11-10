@@ -28,8 +28,8 @@ async fn main() -> anyhow::Result<()> {
     println!("p1 carregou; app oculto: {:?}", b.app_hidden());
     p2.goto("https://lista.mercadolivre.com.br/placa-mae-am5").await?;
     println!("duas janelas abertas; app oculto: {:?}", b.app_hidden());
-    let listings = p1.extract_listings(5).await?;
-    println!("anúncios lidos com a janela oculta:\n{}", listings.lines().take(4).collect::<Vec<_>>().join("\n"));
+    let cards = p1.extract_cards(5).await?;
+    println!("anúncios lidos com a janela oculta: {}", cards.iter().map(|c| c.title.as_str()).collect::<Vec<_>>().join(" | "));
 
     p2.set_visible(true).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -38,8 +38,8 @@ async fn main() -> anyhow::Result<()> {
     p2.set_visible(false).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
     println!("ocultado de novo; app oculto: {:?}", b.app_hidden());
-    let again = p1.extract_listings(3).await?;
-    println!("anúncios lidos depois: {} linhas", again.lines().count());
+    let again = p1.extract_cards(3).await?;
+    println!("anúncios lidos depois: {}", again.len());
 
     let iso = b.new_isolated_page().await?;
     let nav = iso.goto("https://www.facebook.com/marketplace/").await?;

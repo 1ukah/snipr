@@ -4,6 +4,7 @@ import '@fontsource/hanken-grotesk/600.css';
 import '@fontsource/hanken-grotesk/700.css';
 import './styles.css';
 import { finishLogin, renderAccounts } from './accounts';
+import { api } from './api';
 import { $, $$, errText, toast, translate } from './dom';
 import { initFooter } from './footer';
 import { closePop, isPopOpen } from './popover';
@@ -79,6 +80,10 @@ async function boot() {
     state.showIntl = state.settings.show_international;
     render();
     $('#q').focus();
+    api
+      .browserStatus()
+      .then((b) => !b.selected && toast(t.noBrowser))
+      .catch(() => {});
   } catch (e) {
     toast(errText(e));
   }

@@ -96,6 +96,40 @@ pub async fn status(kind: CliKind, provider: Provider, custom: &str) -> CliStatu
     CliStatus { installed: true, logged_in, ..base }
 }
 
+/// Modelos que o CLI aceita na conta logada.
+pub async fn models(kind: CliKind, custom: &str) -> Result<Vec<String>> {
+    // O Claude Code aceita o apelido da família e resolve para a versão atual.
+    if kind == CliKind::Claude {
+        return Ok(["opus", "sonnet", "haiku"].map(String::from).to_vec());
+    }
+    let bin = find(kind, custom).ok_or_else(|| anyhow!("{} não está instalado.", kind.label()))?;
+    let args: &[&str] = if kind == CliKind::Codex { &["debug", "models"] } else { &["models"] };
+    let (_, out) = quick(&bin, args).await.ok_or_else(|| anyhow!("O {} não listou os modelos.", kind.label()))?;
+    let list: Vec<String> = match kind {
+        CliKind::Codex => {
+            let start = out.find('{').unwrap_or(0);
+            let v = serde_json::Deserializer::from_str(&out[start..]).into_iter::<Value>().next().and_then(|v| v.ok()).unwrap_or_default();
+            v["models"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|m| m["visibility"].as_str().is_none_or(|s| s == "list"))
+                .filter_map(|m| m["slug"].as_str().map(String::from))
+                .collect()
+        }
+        _ => out
+            .lines()
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(id, _)| id.trim().to_string())
+            .filter(|id| !id.is_empty() && !id.contains(' '))
+            .collect(),
+    };
+    if list.is_empty() {
+        bail!("O {} não listou os modelos.", kind.label());
+    }
+    Ok(list)
+}
+
 async fn quick(bin: &PathBuf, args: &[&str]) -> Option<(bool, String)> {
     let mut cmd = Command::new(bin);
     cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
@@ -261,6 +295,9 @@ fn build(run: &CliRun, system: &str, prompt: String, mcp: Option<&Mcp>, last_mes
             cmd.args(["--print-timeout", "60m"]);
             if let Some(m) = model {
                 cmd.args(["--model", m]);
+            }
+            if let Some(e) = effort {
+                cmd.args(["--effort", e]);
             }
             Input::Arg(format!("{system}\n\n---\n\n{prompt}"))
         }
@@ -496,7 +533,7 @@ mod tests {
     use crate::{
         mcp::McpServer,
         sites::default_sites,
-        tools::{HumanGates, ToolBoxInit},
+        tools::{HumanGates, Sink, ToolBoxInit},
         types::ConditionFilter,
     };
     use snipr_browser::{Browser, BrowserMode, LaunchOptions};
@@ -527,19 +564,16 @@ mod tests {
             let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
             let agent = format!("teste-{}", kind.binary_name());
             let sites = default_sites();
+            let sink = Arc::new(Sink { job: "teste".into(), events: tx, listings: Default::default(), filter: ConditionFilter::Any, max_price: None });
             let tools = Arc::new(ToolBox::new(ToolBoxInit {
-                job: "teste".into(),
                 agent: agent.clone(),
                 page: page.clone(),
                 sites: sites.clone(),
                 all_sites: sites,
-                filter: ConditionFilter::Any,
-                max_price: None,
                 sessions: Default::default(),
                 on_session: Arc::new(|_, _| {}),
-                events: tx,
                 gates: Arc::new(HumanGates::default()),
-                listings: Default::default(),
+                sink,
             }));
             server.register(&agent, tools.clone());
             let run = CliRun {

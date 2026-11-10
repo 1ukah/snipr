@@ -3,9 +3,9 @@ import type { AuthMode } from './bindings/AuthMode';
 import type { CliStatus } from './bindings/CliStatus';
 import type { Provider } from './bindings/Provider';
 import type { Settings } from './bindings/Settings';
-import { $, el, errText, fold, icon, toast } from './dom';
+import { $, el, errText, icon, toast } from './dom';
 import { renderFooter } from './footer';
-import { closePop, segment, select, togglePop } from './popover';
+import { segment, select } from './popover';
 import { applyTheme, saveSettings, state } from './state';
 import { installUrl, t } from './strings';
 
@@ -30,6 +30,7 @@ function secretField(box: HTMLElement, name: string, placeholder: string) {
       await api.setSecret(name, value);
       toast(t.savedToast);
       models.clear();
+      renderModels();
     } catch (e) {
       toast(errText(e));
     }
@@ -51,6 +52,7 @@ function secretField(box: HTMLElement, name: string, placeholder: string) {
                 onclick: async () => {
                   await api.deleteSecret(name).catch((e) => toast(errText(e)));
                   models.clear();
+                  renderModels();
                   paint();
                 },
               },
@@ -75,59 +77,45 @@ function secretField(box: HTMLElement, name: string, placeholder: string) {
   paint();
 }
 
+function loginState(p: Provider): HTMLElement {
+  const s = statuses.find((x) => x.provider === p);
+  if (!s) return el('span', { class: 'lstate' });
+  if (!s.installed)
+    return el('button', { type: 'button', class: 'btn', onclick: () => api.openUrl(installUrl[p]) }, icon('i-out'), t.install);
+  if (s.logged_in === true) return el('span', { class: 'lstate' }, icon('i-check'), t.connected);
+  return el(
+    'button',
+    {
+      type: 'button',
+      class: 'btn',
+      onclick: async () => {
+        try {
+          await api.openAiLogin(p);
+          toast(t.loginTerminal);
+        } catch (err) {
+          toast(errText(err));
+        }
+      },
+    },
+    icon('i-arrow'),
+    t.enter,
+  );
+}
+
 function renderLogin() {
   const box = $('#auth-login');
-  box.replaceChildren(
-    ...LOGIN_PROVIDERS.map((p) => {
-      const s = statuses.find((x) => x.provider === p);
-      const on = ai().login_provider === p;
-      let right: HTMLElement;
-      if (!s) right = el('span', { class: 'ok' });
-      else if (!s.installed)
-        right = el(
-          'span',
-          { class: 'btn', role: 'button', tabindex: '0', onclick: (e: Event) => (e.stopPropagation(), api.openUrl(installUrl[p])) },
-          icon('i-out'),
-          t.install,
-        );
-      else if (s.logged_in === true) right = el('span', { class: 'ok' }, icon('i-check'), t.connected);
-      else
-        right = el(
-          'span',
-          {
-            class: 'btn',
-            role: 'button',
-            tabindex: '0',
-            onclick: async (e: Event) => {
-              e.stopPropagation();
-              try {
-                await api.openAiLogin(p);
-                toast(t.loginTerminal);
-              } catch (err) {
-                toast(errText(err));
-              }
-            },
-          },
-          icon('i-arrow'),
-          t.enter,
-        );
-      const sub = s && s.installed && s.logged_in === null ? `${t.providerSub[p]} · ${t.installed}` : s && !s.installed ? `${t.providerSub[p]} · ${t.notInstalled}` : t.providerSub[p];
-      return el(
-        'button',
-        {
-          type: 'button',
-          class: 'prow' + (on ? ' on' : ''),
-          onclick: () => {
-            saveAi({ login_provider: p, model: '' }, true);
-            renderAi();
-          },
-        },
-        el('span', { class: 'rd' }),
-        el('span', { class: 'nm' }, LOGIN_NAME[p], el('small', { text: sub })),
-        right,
-      );
-    }),
-  );
+  const pick = el('div', { class: 'sel' });
+  const p = ai().login_provider;
+  select(pick, {
+    pre: t.provider,
+    value: p,
+    options: LOGIN_PROVIDERS.map((x) => [x, `${LOGIN_NAME[x]} (${t.providerSub[x]})`] as [Provider, string]),
+    onChange: (v) => {
+      saveAi({ login_provider: v, model: '', fast_model: '' }, true);
+      renderAi();
+    },
+  });
+  box.replaceChildren(el('div', { class: 'pick' }, pick, loginState(p)));
 }
 
 async function refreshStatuses() {
@@ -135,96 +123,55 @@ async function refreshStatuses() {
   if (!$('#settings').hidden) renderLogin();
 }
 
-function modelSource(): { key: string; provider: Provider; endpoint: string } | null {
-  if (ai().mode !== 'api_key') return null;
-  return { key: `${ai().key_provider}|${ai().endpoint}`, provider: ai().key_provider, endpoint: ai().endpoint };
+function modelSource(): { key: string; load: () => Promise<string[]> } {
+  const a = ai();
+  if (a.mode === 'api_key') return { key: `${a.key_provider}|${a.endpoint}`, load: () => api.listModels(a.key_provider, a.endpoint) };
+  const p = a.mode === 'oauth' ? 'anthropic' : a.login_provider;
+  return { key: `cli|${p}`, load: () => api.cliModels(p) };
 }
 
-function renderModel() {
-  const box = $('#model');
-  const input = el('input', { value: ai().model, placeholder: t.automatic, spellcheck: 'false', 'aria-label': t.model });
+type ModelKey = 'model' | 'fast_model';
+
+function renderModels() {
   const src = modelSource();
-  const shell = el('div', { class: 'combo-in' }, el('span', { class: 'pre', text: t.model }), input);
-  const paintList = (pop: HTMLElement) => {
-    const s = modelSource();
-    if (!s) return;
-    const list = models.get(s.key);
-    const q = fold(input.value.trim());
-    const rows: HTMLElement[] = [];
-    if (!list) rows.push(el('div', { class: 'none', text: t.loadingModels }));
-    else {
-      const shown = list.filter((m) => fold(m).includes(q)).slice(0, 200);
-      if (!shown.length) rows.push(el('div', { class: 'none', text: t.noModels }));
-      shown.forEach((m) =>
-        rows.push(
-          el(
-            'button',
-            {
-              type: 'button',
-              class: 'opt',
-              role: 'option',
-              'aria-selected': String(m === ai().model),
-              onclick: () => {
-                input.value = m;
-                saveAi({ model: m }, true);
-                closePop();
-              },
-            },
-            el('span', { class: 'tick' }, icon('i-check')),
-            m,
-          ),
-        ),
-      );
-    }
-    pop.replaceChildren(...rows);
+  const paint = () => {
+    renderModel('#model', 'model', t.model, models.get(src.key) ?? []);
+    renderModel('#fast-model', 'fast_model', t.fastModel, models.get(src.key) ?? []);
   };
-  const open = () => {
-    const s = modelSource();
-    if (!s || box.classList.contains('open')) return;
-    togglePop(box, input, (pop) => {
-      paintList(pop);
-      if (!models.has(s.key)) {
-        api
-          .listModels(s.provider, s.endpoint)
-          .then((list) => models.set(s.key, list))
-          .catch((e) => {
-            models.set(s.key, []);
-            toast(errText(e));
-          })
-          .finally(() => {
-            const pop2 = box.querySelector<HTMLElement>('.pop');
-            if (pop2) paintList(pop2);
-          });
-      }
+  paint();
+  if (models.has(src.key)) return;
+  src
+    .load()
+    .catch(() => [] as string[])
+    .then((list) => {
+      models.set(src.key, list);
+      if (modelSource().key === src.key) paint();
     });
-    input.focus();
-  };
-  input.addEventListener('focus', open);
-  input.addEventListener('click', (e) => e.stopPropagation());
-  input.addEventListener('input', () => {
-    const pop = box.querySelector<HTMLElement>('.pop');
-    if (pop) paintList(pop);
+}
+
+function renderModel(sel: string, key: ModelKey, label: string, list: string[]) {
+  const cur = ai()[key];
+  const options: [string, string][] = [['', t.automatic], ...list.map((m) => [m, m] as [string, string])];
+  if (cur && !list.includes(cur)) options.push([cur, cur]);
+  select($(sel), { pre: label, value: cur, options, onChange: (v) => saveAi({ [key]: v }, true) });
+}
+
+function effortLevels(): string[] {
+  const a = ai();
+  if (a.mode !== 'api_key' || a.key_provider === 'anthropic') return ['low', 'medium', 'high', 'xhigh', 'max'];
+  if (a.key_provider === 'openai') return ['low', 'medium', 'high', 'xhigh'];
+  return ['low', 'medium', 'high'];
+}
+
+function renderEffort() {
+  const levels = effortLevels();
+  if (ai().effort && !levels.includes(ai().effort)) saveAi({ effort: '' }, true);
+  select($('#effort'), {
+    pre: t.reasoning,
+    value: ai().effort,
+    options: ['', ...levels].map((v) => [v, t.effort[v]] as [string, string]),
+    onChange: (v) => saveAi({ effort: v }),
   });
-  input.addEventListener('change', () => saveAi({ model: input.value.trim() }));
-  if (src) {
-    shell.append(
-      el(
-        'button',
-        {
-          type: 'button',
-          class: 'ib sm',
-          title: t.model,
-          'aria-label': t.model,
-          onclick: (e: Event) => {
-            e.stopPropagation();
-            open();
-          },
-        },
-        icon('i-down'),
-      ),
-    );
-  }
-  box.replaceChildren(shell);
 }
 
 function renderAi() {
@@ -241,7 +188,7 @@ function renderAi() {
       value: p,
       options: KEY_PROVIDERS.map((x) => [x, t.providerName[x]] as [Provider, string]),
       onChange: (v) => {
-        saveAi({ key_provider: v, model: '' }, true);
+        saveAi({ key_provider: v, model: '', fast_model: '' }, true);
         renderAi();
       },
     });
@@ -257,7 +204,48 @@ function renderAi() {
     }
   }
   if (mode === 'oauth') secretField($('#oauth-secret'), 'oauth:anthropic', t.pasteToken);
-  renderModel();
+  renderModels();
+  renderEffort();
+}
+
+async function renderBrowser() {
+  const status = await api.browserStatus().catch(() => null);
+  const warn = $('#browser-warn');
+  const box = $('#browser-pick');
+  if (!status) return;
+  const found = status.browsers;
+  const custom = state.settings.chrome_path.trim();
+  const label = (b: (typeof found)[number]) => (b.version ? `${b.name} ${b.version.split('.')[0]}` : b.name);
+  const options: [string, string][] = [['', found.length ? t.autoBrowser(label(found[0])) : t.automatic], ...found.map((b) => [b.path, label(b)] as [string, string])];
+  if (custom && !found.some((b) => b.path === custom)) options.push([custom, custom]);
+  select(box, {
+    pre: t.browserApp,
+    value: custom,
+    options,
+    onChange: (v) => {
+      saveSettings({ chrome_path: v }, true);
+      $<HTMLInputElement>('#chrome-path').value = v;
+      renderBrowser();
+    },
+  });
+  const selected = found.find((b) => b.path === status.selected);
+  const msg = !found.length && !status.selected ? t.noBrowser : status.custom_missing ? t.customMissing : selected?.name === 'Brave' ? t.braveNote : '';
+  warn.textContent = msg;
+  warn.hidden = !msg;
+  ($('#browser-test') as HTMLButtonElement).disabled = !status.selected;
+}
+
+async function testBrowser() {
+  const btn = $<HTMLButtonElement>('#browser-test');
+  btn.disabled = true;
+  btn.classList.add('busy');
+  try {
+    toast(t.browserOk(await api.testBrowser()));
+  } catch (e) {
+    toast(errText(e));
+  }
+  btn.disabled = false;
+  btn.classList.remove('busy');
 }
 
 function numberInput(sel: string, value: number, apply: (n: number) => void) {
@@ -304,42 +292,24 @@ export function renderSettings() {
     ],
     s.ai.mode,
     (v) => {
-      saveAi({ mode: v, model: '' }, true);
+      saveAi({ mode: v, model: '', fast_model: '' }, true);
       renderAi();
     },
   );
   $<HTMLInputElement>('#endpoint').onchange = (e) => {
     saveAi({ endpoint: (e.target as HTMLInputElement).value.trim() });
     models.clear();
+    renderModels();
   };
-  select($('#effort'), {
-    pre: t.reasoning,
-    value: s.ai.effort,
-    options: ['', 'low', 'medium', 'high', 'max'].map((v) => [v, t.effort[v]] as [string, string]),
-    onChange: (v) => saveAi({ effort: v }),
-  });
   renderAi();
   toggle('#t-footer', s.status_bar, (v) => {
     saveSettings({ status_bar: v });
     renderFooter();
   });
 
-  const why = (m: string) => ($('#why-a').textContent = m === 'single' ? t.whySingle : t.whyMulti);
-  segment(
-    $('#amode'),
-    [
-      ['multi', t.perStore, 'i-many'],
-      ['single', t.single, 'i-one'],
-    ],
-    s.agent_mode,
-    (v) => {
-      why(v);
-      saveSettings({ agent_mode: v });
-    },
-  );
-  why(s.agent_mode);
   numberInput('#max-parallel', s.max_parallel, (n) => saveSettings({ max_parallel: Math.min(8, Math.max(1, n)) }));
-  numberInput('#max-steps', s.max_steps, (n) => saveSettings({ max_steps: Math.min(200, Math.max(5, n)) }));
+  numberInput('#max-steps', s.max_steps, (n) => saveSettings({ max_steps: Math.min(60, Math.max(5, n)) }));
+  renderBrowser();
 
   const whyB: Record<string, string> = { hidden: t.whyHidden, headless: t.whyHeadless, visible: t.whyVisible };
   segment(
@@ -361,17 +331,23 @@ export function renderSettings() {
   numberInput('#idle', s.idle_close_secs, (n) => saveSettings({ idle_close_secs: n }));
   const chrome = $<HTMLInputElement>('#chrome-path');
   chrome.value = s.chrome_path;
-  chrome.onchange = () => saveSettings({ chrome_path: chrome.value.trim() });
+  chrome.onchange = () => {
+    saveSettings({ chrome_path: chrome.value.trim() }, true);
+    renderBrowser();
+  };
   const cli = $<HTMLInputElement>('#cli-path');
   cli.value = s.ai.cli_path;
   cli.onchange = () => {
     saveAi({ cli_path: cli.value.trim() }, true);
     refreshStatuses();
+    models.clear();
+    renderModels();
   };
   refreshStatuses();
 }
 
 export function initSettings() {
+  $('#browser-test').addEventListener('click', testBrowser);
   window.addEventListener('focus', () => {
     if (!$('#settings').hidden && ai().mode === 'login') refreshStatuses();
   });

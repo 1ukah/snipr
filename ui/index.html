@@ -62,6 +62,7 @@
     </div>
   </div></header>
 
+  <div class="mid">
   <div class="scroller"><div class="wrap body">
     <aside class="side" id="side">
       <div class="fs">
@@ -98,7 +99,6 @@
         <span class="sp"></span>
         <button class="tg" id="t-progress" role="switch" aria-checked="false"><span class="sw"></span><svg class="i"><use href="#i-pulse"/></svg><span data-t="progress"></span></button>
       </div>
-      <div class="agents" id="agents" hidden></div>
       <ol class="list" id="list"></ol>
       <div class="empty" id="empty">
         <p data-t="emptyHelp"></p>
@@ -106,6 +106,8 @@
       </div>
     </main>
   </div></div>
+  <aside class="agents" id="agents" hidden></aside>
+  </div>
 
   <footer class="foot wrap" id="foot" hidden></footer>
 
@@ -131,30 +133,35 @@
         <div class="field" id="oauth-secret"></div>
       </div>
       <p class="note" id="auth-note" hidden><svg class="i"><use href="#i-lock"/></svg><span data-t="secretNote"></span></p>
-      <div class="pair2">
-        <div class="sel model" id="model"></div>
-        <div class="sel" id="effort"></div>
-      </div>
+      <div class="sel model" id="model"></div>
+      <p class="why sub" data-t="whyModel"></p>
+      <div class="sel model" id="fast-model"></div>
+      <p class="why sub" data-t="whyFastModel"></p>
+      <div class="sel" id="effort"></div>
       <button class="tg" id="t-footer" role="switch"><span class="sw"></span><svg class="i"><use href="#i-pulse"/></svg><span data-t="statusBar"></span></button>
     </div>
     <div class="grp">
       <div class="lab"><svg class="i"><use href="#i-bot"/></svg><span data-t="agents"></span></div>
-      <div class="seg" id="amode"></div>
-      <p class="why" id="why-a"></p>
-      <div class="kv"><span data-t="parallel"></span><label class="field"><input id="max-parallel" inputmode="numeric" data-t-aria="parallel"></label></div>
+      <p class="why" data-t="whyAgent"></p>
       <div class="kv"><span data-t="maxSteps"></span><label class="field"><input id="max-steps" inputmode="numeric" data-t-aria="maxSteps"></label></div>
     </div>
     <div class="grp">
       <div class="lab"><svg class="i"><use href="#i-globe"/></svg><span data-t="browser"></span></div>
+      <div class="pick">
+        <div class="sel" id="browser-pick"></div>
+        <button class="btn" id="browser-test" type="button"><svg class="i"><use href="#i-check"/></svg><span data-t="testBrowser"></span></button>
+      </div>
+      <p class="note err" id="browser-warn" hidden></p>
       <div class="seg" id="bmode"></div>
       <p class="why" id="why-b"></p>
+      <div class="kv"><span data-t="parallel"></span><label class="field"><input id="max-parallel" inputmode="numeric" data-t-aria="parallel"></label></div>
       <button class="tg" id="t-media" role="switch"><span class="sw"></span><svg class="i"><use href="#i-image-off"/></svg><span data-t="blockMedia"></span></button>
       <button class="tg" id="t-memory" role="switch"><span class="sw"></span><svg class="i"><use href="#i-chip"/></svg><span data-t="lowMemory"></span></button>
       <div class="kv"><span data-t="idleClose"></span><label class="field"><input id="idle" inputmode="numeric" data-t-aria="idleClose"><span class="pre">s</span></label></div>
       <details>
         <summary><span data-t="advanced"></span><svg class="i"><use href="#i-down"/></svg></summary>
         <div class="grp">
-          <div class="field"><span class="pre">Chrome</span><input id="chrome-path" spellcheck="false" data-t-placeholder="autoDetect" data-t-aria="chromePath"></div>
+          <div class="field"><span class="pre" data-t="otherPath"></span><input id="chrome-path" spellcheck="false" data-t-placeholder="autoDetect" data-t-aria="chromePath"></div>
           <div class="field"><span class="pre" data-t="cliPath"></span><input id="cli-path" spellcheck="false" data-t-placeholder="autoDetect" data-t-aria="cliPath"></div>
         </div>
       </details>

@@ -22,6 +22,8 @@ use crate::{cdp::Cdp, page::Page};
 /// headless), só que fora da área visível do monitor.
 pub(crate) const HIDDEN_POS: (i64, i64) = (-2400, -2400);
 pub(crate) const WINDOW_SIZE: (i64, i64) = (1366, 900);
+/// Máximo de abas estacionadas para reuso (igual ao máximo de abas simultâneas).
+const POOL_MAX: usize = 8;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -52,6 +54,8 @@ pub struct Browser {
     revealed: std::sync::atomic::AtomicBool,
     startup: parking_lot::Mutex<Vec<String>>,
     shown: parking_lot::Mutex<Option<String>>,
+    /// Abas estacionadas em about:blank, prontas para reuso.
+    pool: parking_lot::Mutex<Vec<Arc<Page>>>,
     pub(crate) opts: LaunchOptions,
     pub(crate) ua_override: Option<UaOverride>,
     pub version: String,
@@ -63,37 +67,109 @@ pub(crate) struct UaOverride {
     pub metadata: Value,
 }
 
-/// Procura um Chrome (ou Chromium/Edge) instalado.
-pub fn find_chrome() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
+/// Navegador baseado no Chromium encontrado no sistema.
+#[derive(Clone, Debug, Serialize)]
+pub struct BrowserInfo {
+    pub name: String,
+    pub path: PathBuf,
+    pub version: Option<String>,
+}
+
+/// Navegadores compatíveis (Chromium + CDP), em ordem de preferência. O Chrome
+/// vem primeiro: é o mais comum e o que as lojas menos estranham. O Brave fica
+/// por último porque randomiza o fingerprint (canvas, WebGL), o que alguns
+/// sistemas anti-bot tratam como suspeito.
+pub fn detect_browsers() -> Vec<BrowserInfo> {
+    let mut found: Vec<(String, PathBuf)> = Vec::new();
+    let mut push = |name: &str, p: PathBuf| {
+        if p.is_file() && !found.iter().any(|(_, x)| x == &p) {
+            found.push((name.to_string(), p));
+        }
+    };
     #[cfg(windows)]
     {
-        for var in ["LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"] {
-            if let Ok(base) = std::env::var(var) {
-                candidates.push(Path::new(&base).join("Google/Chrome/Application/chrome.exe"));
-            }
-        }
-        for var in ["PROGRAMFILES(X86)", "PROGRAMFILES"] {
-            if let Ok(base) = std::env::var(var) {
-                candidates.push(Path::new(&base).join("Microsoft/Edge/Application/msedge.exe"));
+        let bases: Vec<PathBuf> = ["LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"]
+            .iter()
+            .filter_map(|v| std::env::var(v).ok().map(PathBuf::from))
+            .collect();
+        for (name, rel) in [
+            ("Google Chrome", "Google/Chrome/Application/chrome.exe"),
+            ("Chromium", "Chromium/Application/chrome.exe"),
+            ("Microsoft Edge", "Microsoft/Edge/Application/msedge.exe"),
+            ("Brave", "BraveSoftware/Brave-Browser/Application/brave.exe"),
+        ] {
+            for b in &bases {
+                push(name, b.join(rel));
             }
         }
     }
     #[cfg(target_os = "macos")]
     {
-        candidates.push("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".into());
-        candidates.push("/Applications/Chromium.app/Contents/MacOS/Chromium".into());
-        candidates.push("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge".into());
-    }
-    if let Some(p) = candidates.into_iter().find(|p| p.exists()) {
-        return Some(p);
-    }
-    for name in ["google-chrome-stable", "google-chrome", "chromium", "chromium-browser", "microsoft-edge", "chrome"] {
-        if let Ok(p) = which::which(name) {
-            return Some(p);
+        let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
+        for (name, rel) in [
+            ("Google Chrome", "Google Chrome.app/Contents/MacOS/Google Chrome"),
+            ("Chromium", "Chromium.app/Contents/MacOS/Chromium"),
+            ("Microsoft Edge", "Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            ("Brave", "Brave Browser.app/Contents/MacOS/Brave Browser"),
+        ] {
+            push(name, Path::new("/Applications").join(rel));
+            push(name, home.join("Applications").join(rel));
         }
     }
-    None
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        for (name, bins) in [
+            ("Google Chrome", &["google-chrome-stable", "google-chrome"][..]),
+            ("Chromium", &["chromium", "chromium-browser"][..]),
+            ("Microsoft Edge", &["microsoft-edge-stable", "microsoft-edge"][..]),
+            ("Brave", &["brave-browser", "brave"][..]),
+        ] {
+            for b in bins {
+                if let Ok(p) = which::which(b) {
+                    push(name, p);
+                }
+            }
+        }
+    }
+    found.into_iter().map(|(name, path)| BrowserInfo { version: browser_version(&path), name, path }).collect()
+}
+
+/// Versão sem abrir janela: no Windows o `--version` abre o navegador, então
+/// lemos a pasta de versão ao lado do executável.
+fn browser_version(exe: &Path) -> Option<String> {
+    let is_version = |s: &str| s.split('.').count() == 4 && s.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    if cfg!(windows) {
+        let dir = exe.parent()?;
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| is_version(n))
+            .collect();
+        v.sort_by_key(|s| s.split('.').map(|p| p.parse::<u32>().unwrap_or(0)).collect::<Vec<_>>());
+        return v.pop();
+    }
+    let out = std::process::Command::new(exe).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).split_whitespace().find(|w| is_version(w)).map(String::from)
+}
+
+/// Primeiro navegador compatível encontrado.
+pub fn find_chrome() -> Option<PathBuf> {
+    detect_browsers().into_iter().next().map(|b| b.path)
+}
+
+/// Nome da marca nos Client Hints, coerente com o executável.
+fn brand_for(exe: &Path) -> &'static str {
+    let name = exe.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_lowercase();
+    if name.contains("edge") {
+        "Microsoft Edge"
+    } else if name.contains("brave") {
+        "Brave"
+    } else if name.contains("chromium") {
+        "Chromium"
+    } else {
+        "Google Chrome"
+    }
 }
 
 impl Browser {
@@ -158,9 +234,8 @@ impl Browser {
             args.push("--disable-background-networking".into());
             args.push("--no-pings".into());
             args.push("--process-per-site".into());
-            // Composição em software: corta ~25% da RAM e mantém o WebGL na GPU
-            // real (o fingerprint não muda, ao contrário de --disable-gpu).
-            args.push("--disable-gpu-compositing".into());
+            // Sem --disable-gpu-compositing: ele economiza RAM, mas passa a
+            // composição para a CPU. O Snipr prefere gastar RAM a gastar CPU.
             disabled_features.push("SpareRendererForSitePerProcess");
             disabled_features.push("PrefetchPrivacyChanges");
             disabled_features.push("Prerender2");
@@ -213,7 +288,7 @@ impl Browser {
         let version = ver["product"].as_str().unwrap_or_default().to_string();
 
         let ua_override = if user_agent.contains("HeadlessChrome") {
-            Some(build_ua_override(&user_agent))
+            Some(build_ua_override(&user_agent, brand_for(&exe)))
         } else {
             None
         };
@@ -225,6 +300,7 @@ impl Browser {
             revealed: std::sync::atomic::AtomicBool::new(false),
             startup: parking_lot::Mutex::new(startup),
             shown: parking_lot::Mutex::new(None),
+            pool: parking_lot::Mutex::new(Vec::new()),
             opts,
             ua_override,
             version,
@@ -234,7 +310,9 @@ impl Browser {
             let weak = Arc::downgrade(&browser);
             tokio::spawn(async move {
                 loop {
-                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    // Novas janelas já chamam keep_hidden; este laço só cobre o
+                    // caso raro de o macOS reexibir o app sozinho.
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
                     let Some(b) = weak.upgrade() else { break };
                     if b.cdp.is_closed() {
                         break;
@@ -330,6 +408,42 @@ impl Browser {
         self.new_page_in(None).await
     }
 
+    /// Pega uma aba estacionada (ou abre uma nova). Reusar abas evita abrir e
+    /// fechar janelas a cada busca, o que custa CPU. A aba volta para o
+    /// estacionamento quando o `Lease` é descartado (inclusive num cancelamento).
+    pub async fn lease(self: &Arc<Self>) -> Result<Lease> {
+        loop {
+            let pooled = self.pool.lock().pop();
+            let Some(page) = pooled else { break };
+            if page.alive().await {
+                return Ok(Lease { browser: self.clone(), page: Some(page) });
+            }
+            page.close().await;
+        }
+        Ok(Lease { browser: self.clone(), page: Some(self.new_page().await?) })
+    }
+
+    /// Estaciona a aba em about:blank: os scripts da loja param e a aba
+    /// ociosa não gasta CPU. A aba fica aberta (RAM) para o próximo uso.
+    async fn give_back(&self, page: Arc<Page>) {
+        if page.park().await.is_ok() {
+            let mut pool = self.pool.lock();
+            if pool.len() < POOL_MAX {
+                pool.push(page);
+                return;
+            }
+        }
+        page.close().await;
+    }
+
+    /// Fecha as abas estacionadas. Chamado quando o Snipr fica ocioso.
+    pub async fn drain_pool(&self) {
+        let pages = std::mem::take(&mut *self.pool.lock());
+        for p in pages {
+            p.close().await;
+        }
+    }
+
     pub async fn new_isolated_page(self: &Arc<Self>) -> Result<Arc<Page>> {
         let ctx = self.cdp.call(None, "Target.createBrowserContext", json!({ "disposeOnDetach": true })).await?;
         let id = ctx["browserContextId"].as_str().ok_or_else(|| anyhow!("createBrowserContext sem id"))?.to_string();
@@ -384,6 +498,35 @@ impl Browser {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
             kill_pid(pid);
+        }
+    }
+}
+
+/// Aba emprestada do estacionamento do `Browser`.
+pub struct Lease {
+    browser: Arc<Browser>,
+    page: Option<Arc<Page>>,
+}
+
+impl Lease {
+    pub fn page(&self) -> &Arc<Page> {
+        self.page.as_ref().expect("aba emprestada")
+    }
+}
+
+impl std::ops::Deref for Lease {
+    type Target = Page;
+    fn deref(&self) -> &Page {
+        self.page()
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        let Some(page) = self.page.take() else { return };
+        let browser = self.browser.clone();
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn(async move { browser.give_back(page).await });
         }
     }
 }
@@ -488,7 +631,7 @@ async fn wait_devtools_port(port_file: &Path, max: Duration) -> Result<String> {
 
 /// No headless o user-agent e os Client Hints carregam "HeadlessChrome".
 /// Reescrevemos ambos de forma coerente com o Chrome normal da mesma versão.
-fn build_ua_override(ua: &str) -> UaOverride {
+fn build_ua_override(ua: &str, brand: &str) -> UaOverride {
     let user_agent = ua.replace("HeadlessChrome", "Chrome");
     let full = user_agent
         .split("Chrome/")
@@ -507,12 +650,12 @@ fn build_ua_override(ua: &str) -> UaOverride {
     let arch = if cfg!(target_arch = "aarch64") { "arm" } else { "x86" };
     let metadata = json!({
         "brands": [
-            { "brand": "Google Chrome", "version": major },
+            { "brand": brand, "version": major },
             { "brand": "Chromium", "version": major },
             { "brand": "Not_A Brand", "version": "24" }
         ],
         "fullVersionList": [
-            { "brand": "Google Chrome", "version": full },
+            { "brand": brand, "version": full },
             { "brand": "Chromium", "version": full },
             { "brand": "Not_A Brand", "version": "24.0.0.0" }
         ],

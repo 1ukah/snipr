@@ -5,7 +5,7 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use snipr_core::{secrets, CliStatus, Engine, Provider, SearchEvent, SearchRequest, Settings, Site, Suggestion, Theme};
+use snipr_core::{secrets, BrowserStatus, CliStatus, Engine, Provider, SearchEvent, SearchRequest, Settings, Site, Suggestion, Theme};
 use tauri::{window::Color, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 struct AppState {
@@ -44,8 +44,23 @@ async fn add_site(state: State<'_, AppState>, url: String, name: Option<String>,
 }
 
 #[tauri::command]
-async fn check_site_login(state: State<'_, AppState>, id: String) -> Res<Site> {
-    state.engine.check_site_login(&id).await.map_err(err)
+async fn check_site(state: State<'_, AppState>, id: String) -> Res<Site> {
+    state.engine.check_site(&id).await.map_err(err)
+}
+
+#[tauri::command]
+fn browser_status(state: State<'_, AppState>) -> BrowserStatus {
+    state.engine.browser_status()
+}
+
+#[tauri::command]
+async fn test_browser(state: State<'_, AppState>) -> Res<String> {
+    state.engine.test_browser().await.map_err(err)
+}
+
+#[tauri::command]
+async fn cli_models(state: State<'_, AppState>, provider: Provider) -> Res<Vec<String>> {
+    state.engine.cli_models(provider).await.map_err(err)
 }
 
 #[tauri::command]
@@ -222,7 +237,10 @@ fn main() {
             list_suggestions,
             add_site,
             remove_site,
-            check_site_login,
+            check_site,
+            browser_status,
+            test_browser,
+            cli_models,
             secret_status,
             set_secret,
             delete_secret,

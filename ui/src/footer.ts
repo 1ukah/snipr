@@ -107,13 +107,9 @@ function config() {
   return el(
     'div',
     { class: 'cfg' },
-    item('i-spark', t.ai, [engine(), model || ai.model || t.automatic, ai.effort && t.effort[ai.effort]]),
-    item('i-bot', t.agents, [
-      s.agent_mode === 'single' ? t.single : t.perStore,
-      s.agent_mode === 'multi' && t.simultaneous(s.max_parallel),
-      t.steps(s.max_steps),
-    ]),
-    item('i-globe', t.browser, [browser[s.browser_mode]]),
+    item('i-spark', t.ai, [engine(), model || ai.fast_model || t.automatic, ai.effort && t.effort[ai.effort]]),
+    item('i-bot', t.agents, [t.steps(s.max_steps)]),
+    item('i-globe', t.browser, [browser[s.browser_mode], t.tabs(s.max_parallel)]),
   );
 }
 

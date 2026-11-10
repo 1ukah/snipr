@@ -43,7 +43,8 @@ svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor;
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand > svg { width: 34px; height: 34px; }
 .acts { display: flex; gap: 2px; }
-.scroller { flex: 1; min-height: 0; overflow: auto; }
+.mid { flex: 1; min-height: 0; display: flex; position: relative; }
+.scroller { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
 .body { display: grid; grid-template-columns: 300px minmax(0, 1fr); column-gap: 48px; align-items: start; }
 
 .ib { display: inline-grid; place-items: center; width: 36px; height: 36px; background: none; border: 0; border-radius: 7px; color: var(--fg-2); flex: none; }
@@ -157,8 +158,14 @@ svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor;
 .human .btn { color: var(--bg); border-color: currentColor; }
 .human .btn.pri { background: var(--bg); color: var(--fg); border-color: var(--bg); }
 
-.agents { display: grid; border: 1px solid var(--line); border-radius: 8px; padding: 4px 14px; }
-.agent { display: grid; grid-template-columns: 190px 120px minmax(0, 1fr) 16px; align-items: center; gap: 16px; padding: 9px 0; font-size: 14.5px; }
+.agents { flex: none; width: 300px; display: grid; align-content: start; overflow-y: auto; border-left: 1px solid var(--line); background: var(--bg); padding: 20px 20px 24px; }
+.agents .fl { margin-bottom: 2px; }
+.agents .fl .n { margin-left: auto; font-variant-numeric: tabular-nums; }
+.agent { display: grid; grid-template-columns: minmax(0, 1fr) 16px; grid-template-areas: "nm st" "trk trk" "m m"; align-items: center; gap: 6px 10px; padding: 10px 0; font-size: 14.5px; }
+.agent .nm { grid-area: nm; }
+.agent .st { grid-area: st; }
+.agent .trk { grid-area: trk; }
+.agent .m { grid-area: m; font-size: 13px; }
 .agent + .agent { border-top: 1px solid var(--line); }
 .agent .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent .trk { height: 2px; background: var(--line); position: relative; }
@@ -217,17 +224,13 @@ svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor;
 .kv { display: grid; grid-template-columns: minmax(0, 1fr) 110px; align-items: center; gap: 12px; font-size: 14.5px; color: var(--fg-2); }
 .kv .field input { text-align: right; font-variant-numeric: tabular-nums; }
 .pair2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.pick { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .note { margin: 0; font-size: 13px; color: var(--fg-3); display: flex; align-items: center; gap: 7px; }
 .note svg.i { width: 14px; height: 14px; }
-.prow { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: none; text-align: left; width: 100%; font-size: 15px; color: var(--fg-2); }
-.prow .rd { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--line-2); flex: none; display: grid; place-items: center; }
-.prow.on { border-color: var(--fg); color: var(--fg); }
-.prow.on .rd { border-color: var(--fg); }
-.prow.on .rd::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--fg); }
-.prow .nm { flex: 1; min-width: 0; }
-.prow .nm small { color: var(--fg-3); font-size: 13px; margin-left: 6px; }
-.prow .ok { font-size: 13px; color: var(--fg-2); display: inline-flex; align-items: center; gap: 5px; }
-.prow .ok svg.i { width: 14px; height: 14px; }
+.pick { align-items: center; }
+.lstate { font-size: 13px; color: var(--fg-2); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; padding: 0 4px; }
+.lstate svg.i { width: 14px; height: 14px; }
+.why.sub { font-size: 13px; color: var(--fg-3); margin: -4px 0 4px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .auth { display: grid; gap: 8px; }
 .srow { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 15px; min-width: 0; }
 .srow:first-child { border-top: 0; }
@@ -240,7 +243,7 @@ details summary::-webkit-details-marker { display: none; }
 details summary svg.i { width: 14px; height: 14px; transition: transform .15s; }
 details[open] summary svg.i { transform: rotate(180deg); }
 details[open] summary { margin-bottom: 10px; }
-.fl-add { margin-left: auto; display: inline-grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 6px; background: none; color: var(--fg-2); }
+.fl-add { margin-left: auto; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; color: var(--fg-2); }
 .fl-add:hover { color: var(--fg); border-color: var(--line-2); background: var(--raise); }
 .fl-add svg.i { width: 14px; height: 14px; }
 .modal { position: absolute; z-index: 22; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(1400px, calc(100% - 48px)); max-height: min(800px, calc(100% - 48px)); display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
@@ -316,7 +319,7 @@ button.card:hover .act { color: var(--fg); }
   .row .dest span { display: none; }
   .row .sub { display: block; }
   .price .int { font-size: 19px; }
-  .agent { grid-template-columns: 110px 48px minmax(0, 1fr) 16px; }
+  .agents { position: absolute; z-index: 15; top: 0; right: 0; bottom: 0; width: min(300px, 88%); box-shadow: var(--shadow); padding: 16px; }
   .pair2 { grid-template-columns: minmax(0, 1fr); }
   .seg button svg.i { display: none; }
   .sheet { padding: 0 16px 28px; }

@@ -2,4 +2,12 @@
 import type { AuthMode } from "./AuthMode";
 import type { Provider } from "./Provider";
 
-export type AiSettings = { mode: AuthMode, login_provider: Provider, key_provider: Provider, oauth_provider: Provider, endpoint: string, model: string, effort: string, cli_path: string, };
+export type AiSettings = { mode: AuthMode, login_provider: Provider, key_provider: Provider, oauth_provider: Provider, endpoint: string, 
+/**
+ * Modelo do agent (lojas sem leitura automática). Vazio = padrão do provedor.
+ */
+model: string, 
+/**
+ * Modelo das chamadas curtas: plano e filtro dos anúncios. Vazio = automático.
+ */
+fast_model: string, effort: string, cli_path: string, };

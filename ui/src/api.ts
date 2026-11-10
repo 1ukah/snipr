@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import type { BrowserStatus } from './bindings/BrowserStatus';
 import type { CliStatus } from './bindings/CliStatus';
 import type { Provider } from './bindings/Provider';
 import type { SearchEvent } from './bindings/SearchEvent';
@@ -16,7 +17,10 @@ export const api = {
   suggestions: () => invoke<Suggestion[]>('list_suggestions'),
   addSite: (url: string, name: string | null, manual: boolean) => invoke<Site>('add_site', { url, name, manual }),
   removeSite: (id: string) => invoke<void>('remove_site', { id }),
-  checkSiteLogin: (id: string) => invoke<Site>('check_site_login', { id }),
+  checkSite: (id: string) => invoke<Site>('check_site', { id }),
+  browserStatus: () => invoke<BrowserStatus>('browser_status'),
+  testBrowser: () => invoke<string>('test_browser'),
+  cliModels: (provider: Provider) => invoke<string[]>('cli_models', { provider }),
   secretStatus: (names: string[]) => invoke<Record<string, boolean>>('secret_status', { names }),
   setSecret: (name: string, value: string) => invoke<void>('set_secret', { name, value }),
   deleteSecret: (name: string) => invoke<void>('delete_secret', { name }),

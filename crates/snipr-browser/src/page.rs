@@ -1,13 +1,16 @@
 //! Uma aba controlada pelo agente.
 
 use std::{
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, bail, Result};
 use parking_lot::Mutex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -25,6 +28,23 @@ pub struct NavInfo {
     pub challenge: ChallengeOutcome,
 }
 
+/// Card de anúncio lido de uma página de resultados.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Card {
+    pub title: String,
+    /// Preços atuais em reais, na ordem da página. Sem parcelas, descontos,
+    /// fretes nem preços riscados.
+    pub prices: Vec<String>,
+    /// Preços riscados (antes do desconto).
+    pub old: Vec<String>,
+    /// Link do anúncio. Vazio quando o card não expõe link (ex.: Shopee).
+    pub url: String,
+    /// Texto restante do card (condição, vendedor, cidade, frete…).
+    pub extra: String,
+    pub intl: bool,
+}
+
 pub struct Page {
     browser: Arc<Browser>,
     pub session: String,
@@ -32,6 +52,7 @@ pub struct Page {
     world: Mutex<Option<i64>>,
     mouse: Mutex<(f64, f64)>,
     context: Option<String>,
+    shown: AtomicBool,
 }
 
 const BLOCKED_PATTERNS: &[&str] = &[
@@ -54,6 +75,7 @@ impl Page {
             session,
             target_id,
             context,
+            shown: AtomicBool::new(false),
             world: Mutex::new(None),
             mouse: Mutex::new((
                 rnd(300, 700) as f64,
@@ -253,21 +275,75 @@ impl Page {
         Ok(v.as_str().unwrap_or_default().to_string())
     }
 
-    pub async fn extract_listings(&self, max_cards: usize) -> Result<String> {
+    pub async fn extract_cards(&self, max_cards: usize) -> Result<Vec<Card>> {
         self.ensure_loaded().await;
-        let mut v = self.call_fn(js::EXTRACT_LISTINGS, &[json!(max_cards)]).await?;
-        if v.as_str().is_some_and(|s| s.starts_with("Nenhum card")) {
-            // Conteúdo renderizado por JS pode chegar um pouco depois.
-            tokio::time::sleep(Duration::from_millis(1500)).await;
-            v = self.call_fn(js::EXTRACT_LISTINGS, &[json!(max_cards)]).await?;
+        let read = || async {
+            let v = self.call_fn(js::EXTRACT_LISTINGS, &[json!(max_cards)]).await?;
+            Ok::<_, anyhow::Error>(serde_json::from_str::<Vec<Card>>(v.as_str().unwrap_or("[]"))?)
+        };
+        let cards = read().await?;
+        if !cards.is_empty() {
+            return Ok(cards);
         }
-        Ok(v.as_str().unwrap_or_default().to_string())
+        // Conteúdo renderizado por JS pode chegar um pouco depois.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        read().await
     }
 
     pub async fn read_text(&self, max_chars: usize) -> Result<String> {
         self.ensure_loaded().await;
         let v = self.call_fn(js::READ_TEXT, &[json!(max_chars)]).await?;
         Ok(v.as_str().unwrap_or_default().to_string())
+    }
+
+    /// Abre seções recolhidas (acordeões, "ver mais", ficha técnica) com
+    /// cliques reais e lê o texto da página.
+    pub async fn read_details(&self, max_chars: usize) -> Result<String> {
+        self.ensure_loaded().await;
+        let targets = self.call_fn(js::EXPAND_TARGETS, &[json!(4)]).await.unwrap_or_default();
+        for r in targets.as_array().into_iter().flatten().filter_map(Value::as_u64) {
+            match self.click_ref(r as u32).await {
+                // Um clique que navegou para outra página encerra a expansão.
+                Ok(msg) if msg.starts_with("Clicado. Navegou") || msg.starts_with("Link aberto") => break,
+                _ => tokio::time::sleep(Duration::from_millis(rnd(250, 500))).await,
+            }
+        }
+        self.read_text(max_chars).await
+    }
+
+    /// Cookies que o navegador mandaria para estas URLs, no formato do
+    /// cabeçalho `Cookie`.
+    pub async fn cookie_header(&self, urls: &[&str]) -> Result<String> {
+        let v = self.cmd("Network.getCookies", json!({ "urls": urls })).await?;
+        Ok(v["cookies"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| Some(format!("{}={}", c["name"].as_str()?, c["value"].as_str()?)))
+            .collect::<Vec<_>>()
+            .join("; "))
+    }
+
+    /// Para os scripts da página (about:blank) e oculta a janela, se estava visível.
+    pub(crate) async fn park(&self) -> Result<()> {
+        if self.shown.load(Ordering::SeqCst) {
+            let _ = self.set_visible(false).await;
+        }
+        *self.world.lock() = None;
+        self.browser
+            .cdp
+            .call_timeout(Some(&self.session), "Page.navigate", json!({ "url": "about:blank" }), Duration::from_secs(10))
+            .await?;
+        *self.world.lock() = None;
+        Ok(())
+    }
+
+    pub(crate) async fn alive(&self) -> bool {
+        self.browser
+            .cdp
+            .call_timeout(None, "Target.getTargetInfo", json!({ "targetId": self.target_id }), Duration::from_secs(5))
+            .await
+            .is_ok()
     }
 
     pub async fn detect_challenge(&self) -> Option<String> {
@@ -436,6 +512,7 @@ impl Page {
         if self.browser.mode() == BrowserMode::Headless {
             bail!("o navegador está em modo headless; mude para 'oculto' nos ajustes para poder mostrar a janela");
         }
+        self.shown.store(visible, Ordering::SeqCst);
         if !visible && self.browser.conceal().await? {
             return Ok(());
         }

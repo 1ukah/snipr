@@ -25,12 +25,23 @@ const domainOf = (url: string) =>
     .split(/[?#]/)[0]
     .replace(/\/$/, '');
 
-function card(name: string, domain: string, tag: { text: string; checking?: boolean } | null, action: { icon: string; title: string; run: () => void } | null, whole = false) {
+interface Tag {
+  text: string;
+  tip?: string;
+  checking?: boolean;
+}
+
+function card(name: string, domain: string, tags: Tag[], action: { icon: string; title: string; run: () => void } | null, whole = false) {
   const kids = [
     el(
       'span',
       { class: 'tx' },
-      el('span', { class: 'l1' }, el('span', { class: 'nm', text: name, title: name }), tag ? el('span', { class: 'tag' + (tag.checking ? ' chk' : ''), text: tag.text }) : null),
+      el(
+        'span',
+        { class: 'l1' },
+        el('span', { class: 'nm', text: name, title: name }),
+        ...tags.map((tag) => el('span', { class: 'tag' + (tag.checking ? ' chk' : ''), text: tag.text, title: tag.tip ?? null })),
+      ),
       el('span', { class: 'dm', text: domain, title: domain }),
     ),
   ];
@@ -38,9 +49,17 @@ function card(name: string, domain: string, tag: { text: string; checking?: bool
   return el('div', { class: 'card' }, ...kids, action ? el('button', { type: 'button', class: 'act', title: action.title, 'aria-label': action.title, onclick: action.run }, icon(action.icon)) : el('span'));
 }
 
+function siteTags(s: Site): Tag[] {
+  if (checking.has(s.id)) return [{ text: t.checkingLogin, checking: true }];
+  const tags: Tag[] = [];
+  if (s.requires_login) tags.push({ text: t.requiresLogin });
+  if (!s.search_url && !s.api) tags.push({ text: t.agentTag, tip: t.agentTip });
+  else if (s.stage) tags.push({ text: t.stageTag(s.stage), tip: t.stageTip[s.stage] });
+  return tags;
+}
+
 function siteCard(s: Site) {
-  const tag = checking.has(s.id) ? { text: t.checkingLogin, checking: true } : s.requires_login ? { text: t.requiresLogin } : null;
-  return card(s.name, domainOf(s.home_url || s.domain), tag, { icon: 'i-x', title: t.removeStore(s.name), run: () => remove(s) });
+  return card(s.name, domainOf(s.home_url || s.domain), siteTags(s), { icon: 'i-x', title: t.removeStore(s.name), run: () => remove(s) });
 }
 
 async function recheckAll() {
@@ -55,7 +74,7 @@ async function recheckAll() {
   const worker = async () => {
     for (let id = queue.shift(); id; id = queue.shift()) {
       try {
-        const site = await api.checkSiteLogin(id);
+        const site = await api.checkSite(id);
         const i = state.sites.findIndex((s) => s.id === id);
         if (i >= 0) state.sites[i] = site;
       } catch (e) {
@@ -65,7 +84,8 @@ async function recheckAll() {
       renderStoresModal();
     }
   };
-  await Promise.all([worker(), worker(), worker()]);
+  // Duas verificações por vez: cada uma usa uma aba do Chrome.
+  await Promise.all([worker(), worker()]);
   await reloadSites();
   rechecking = false;
   btn.disabled = false;
@@ -79,7 +99,7 @@ export function renderStoresModal() {
   const f = fold(q.trim());
   const match = (name: string, domain: string) => !f || fold(name).includes(f) || fold(domain).includes(f);
   const checking = (manual: boolean) =>
-    pending.filter((p) => p.manual === manual && match(p.name, p.domain)).map((p) => card(p.name, p.domain, { text: t.checkingLogin, checking: true }, null));
+    pending.filter((p) => p.manual === manual && match(p.name, p.domain)).map((p) => card(p.name, p.domain, [{ text: t.checkingLogin, checking: true }], null));
   const added = state.sites.filter((s) => !s.manual && match(s.name, s.domain));
   const manual = state.sites.filter((s) => s.manual && match(s.name, s.domain));
   const taken = (domain: string) => state.sites.some((x) => domain === x.domain || domain.startsWith(x.domain + '/') || domainOf(x.home_url) === domain);
@@ -94,7 +114,7 @@ export function renderStoresModal() {
   $('#sm-added').replaceChildren(...(addedCards.length ? addedCards : none(t.noStoreFound)));
   $('#sm-sugg').replaceChildren(
     ...(sugg.length
-      ? sugg.map((s) => card(s.name, s.domain, null, { icon: 'i-plus', title: t.addStore(s.name), run: () => add(s.url, s.name, false) }, true))
+      ? sugg.map((s) => card(s.name, s.domain, [], { icon: 'i-plus', title: t.addStore(s.name), run: () => add(s.url, s.name, false) }, true))
       : none(t.noSuggestionFound)),
   );
   $('#sm-man').replaceChildren(...(manualCards.length ? manualCards : f ? none(t.noStoreFound) : []));

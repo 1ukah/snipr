@@ -37,17 +37,6 @@ impl ConditionFilter {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(export)]
-pub enum AgentMode {
-    /// Um agente percorre todos os sites, em sequência. Mais barato.
-    Single,
-    /// Um agente por site, em paralelo (limitado por `max_parallel`). Mais rápido.
-    #[default]
-    Multi,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default, TS)]
 #[serde(default)]
 #[ts(export)]
@@ -70,8 +59,6 @@ pub struct SearchRequest {
     /// IDs de sites. Vazio = sites habilitados nos ajustes.
     #[serde(default)]
     pub sites: Vec<String>,
-    #[serde(default)]
-    pub mode: Option<AgentMode>,
     #[serde(default)]
     pub max_price: Option<f64>,
     #[serde(default)]
@@ -133,6 +120,8 @@ pub enum SearchEvent {
     Finished { job: String, total: usize, #[ts(type = "number")] elapsed_ms: u128, cancelled: bool },
 }
 
+/// Uma loja em andamento numa busca (o nome segue "agent" por compatibilidade
+/// com os eventos já consumidos pelos frontends).
 #[derive(Clone, Debug, Serialize, TS)]
 #[ts(export)]
 pub struct AgentInfo {
@@ -150,6 +139,25 @@ pub struct Usage {
     pub output_tokens: u64,
     pub cost_usd: Option<f64>,
     pub model: Option<String>,
+}
+
+/// Navegador compatível encontrado no sistema.
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
+pub struct DetectedBrowser {
+    pub name: String,
+    pub path: String,
+    pub version: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export)]
+pub struct BrowserStatus {
+    pub browsers: Vec<DetectedBrowser>,
+    /// Caminho que o Snipr vai usar (o dos ajustes ou o primeiro encontrado).
+    pub selected: Option<String>,
+    /// O caminho dos ajustes não existe.
+    pub custom_missing: bool,
 }
 
 impl Usage {

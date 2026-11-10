@@ -46,8 +46,11 @@ async fn main() -> anyhow::Result<()> {
     println!("sinais: {}", signals.as_str().unwrap_or_default());
 
     let t = Instant::now();
-    let listings = page.extract_listings(15).await?;
-    println!("\n--- extract_listings ({:?}) ---\n{listings}", t.elapsed());
+    let cards = page.extract_cards(15).await?;
+    println!("\n--- extract_cards: {} em {:?} ---", cards.len(), t.elapsed());
+    for c in &cards {
+        println!("{} | antes {} | {} | {}", c.prices.join(" / "), c.old.join(", "), c.title, c.url);
+    }
 
     let snap = page.snapshot(25, None).await?;
     println!("\n--- snapshot (25 itens) ---\n{snap}");

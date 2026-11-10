@@ -1,6 +1,9 @@
-//! Ferramentas expostas ao agente. As mesmas definições servem para:
+//! Ferramentas do agent (lojas sem leitura automática). As mesmas definições servem para:
 //! - o loop próprio (API Anthropic / OpenAI-compatível)
 //! - o servidor MCP (Claude Code, ou qualquer cliente MCP no futuro)
+//!
+//! A navegação com tratamento de desafio, login e ajuda humana também é usada
+//! pela leitura automática na etapa D.
 
 use std::{
     collections::HashMap,
@@ -13,19 +16,23 @@ use std::{
 
 use parking_lot::Mutex;
 use serde_json::{json, Value};
-use snipr_browser::{ChallengeOutcome, NavInfo, Page};
+use snipr_browser::{Card, ChallengeOutcome, NavInfo, Page};
 use snipr_llm::ToolSpec;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     config::SessionState,
+    parse,
     sites::Site,
     types::{Condition, ConditionFilter, HumanKind, Listing, SearchEvent, Usage},
 };
 
 pub type SessionHook = Arc<dyn Fn(&str, bool) + Send + Sync>;
 
-const MAX_OUTPUT: usize = 12_000;
+/// Limite de cada resposta de ferramenta: tudo o que volta para o modelo é
+/// reenviado a cada passo seguinte.
+const MAX_OUTPUT: usize = 5_000;
+const MAX_CARDS: usize = 25;
 
 /// Pontos onde o agente espera uma ação humana (desafio, login, 2FA).
 #[derive(Default)]
@@ -53,19 +60,87 @@ impl HumanGates {
     }
 }
 
-pub struct ToolBox {
+/// Destino dos anúncios de uma busca: valida, descarta repetidos e emite eventos.
+pub struct Sink {
     pub job: String,
+    pub events: mpsc::UnboundedSender<SearchEvent>,
+    pub listings: Arc<Mutex<Vec<Listing>>>,
+    pub filter: ConditionFilter,
+    pub max_price: Option<f64>,
+}
+
+impl Sink {
+    pub fn log(&self, agent: &str, message: impl Into<String>) {
+        let _ = self.events.send(SearchEvent::Log { job: self.job.clone(), agent: agent.to_string(), message: message.into() });
+    }
+
+    pub fn usage(&self, agent: Option<&str>, usage: Usage) {
+        if usage.is_empty() {
+            return;
+        }
+        let _ = self.events.send(SearchEvent::Usage { job: self.job.clone(), agent: agent.map(String::from), usage });
+    }
+
+    /// Registra o anúncio. `Ok(false)` = repetido; `Err` = motivo da recusa.
+    pub fn accept(&self, agent: &str, l: Listing) -> Result<bool, String> {
+        if !(l.price.is_finite() && l.price > 0.0) {
+            return Err("preço inválido".into());
+        }
+        if l.title.trim().is_empty() || !l.url.starts_with("http") {
+            return Err("título/URL inválidos".into());
+        }
+        match (self.filter, l.condition) {
+            (ConditionFilter::New, Condition::Used) | (ConditionFilter::Used, Condition::New) => return Err("condição diferente da pedida".into()),
+            _ => {}
+        }
+        if self.max_price.is_some_and(|m| l.price > m) {
+            return Err("acima do preço máximo".into());
+        }
+        let key = dedupe_key(&l.url, &l.title);
+        {
+            let mut all = self.listings.lock();
+            if all.iter().any(|x| dedupe_key(&x.url, &x.title) == key) {
+                return Ok(false);
+            }
+            all.push(l.clone());
+        }
+        let _ = self.events.send(SearchEvent::Listing { job: self.job.clone(), agent: agent.to_string(), listing: Box::new(l) });
+        Ok(true)
+    }
+}
+
+/// Monta o anúncio a partir de um card. `price` = preço escolhido.
+pub fn listing_from_card(site: &Site, card: &Card, price: f64, condition: Condition, fallback_url: &str) -> Listing {
+    let original = card.old.iter().filter_map(|p| parse::parse_brl(p)).fold(0.0f64, f64::max);
+    Listing {
+        id: uuid::Uuid::new_v4().to_string(),
+        site_id: site.id.clone(),
+        site_name: site.name.clone(),
+        title: card.title.trim().to_string(),
+        price,
+        currency: "BRL".into(),
+        condition,
+        url: if card.url.is_empty() { fallback_url.to_string() } else { card.url.clone() },
+        seller: None,
+        location: None,
+        shipping: None,
+        notes: None,
+        original_price: Some(original).filter(|o| *o > price),
+        international: card.intl,
+    }
+}
+
+pub struct ToolBox {
     pub agent: String,
     page: Arc<Page>,
     sites: Vec<Site>,
     all_sites: Vec<Site>,
-    filter: ConditionFilter,
-    max_price: Option<f64>,
     sessions: HashMap<String, SessionState>,
     on_session: SessionHook,
-    events: mpsc::UnboundedSender<SearchEvent>,
     gates: Arc<HumanGates>,
-    pub listings: Arc<Mutex<Vec<Listing>>>,
+    sink: Arc<Sink>,
+    /// Cards lidos até agora (o id é a posição + 1) e a página de cada um.
+    cards: Mutex<Vec<(Card, String)>>,
     finished: AtomicBool,
     summary: Mutex<String>,
     /// Serializa chamadas: o agente pode pedir ferramentas em paralelo,
@@ -74,35 +149,28 @@ pub struct ToolBox {
 }
 
 pub struct ToolBoxInit {
-    pub job: String,
     pub agent: String,
     pub page: Arc<Page>,
     pub sites: Vec<Site>,
     pub all_sites: Vec<Site>,
-    pub filter: ConditionFilter,
-    pub max_price: Option<f64>,
     pub sessions: HashMap<String, SessionState>,
     pub on_session: SessionHook,
-    pub events: mpsc::UnboundedSender<SearchEvent>,
     pub gates: Arc<HumanGates>,
-    pub listings: Arc<Mutex<Vec<Listing>>>,
+    pub sink: Arc<Sink>,
 }
 
 impl ToolBox {
     pub fn new(i: ToolBoxInit) -> Self {
         Self {
-            job: i.job,
             agent: i.agent,
             page: i.page,
             sites: i.sites,
             all_sites: i.all_sites,
-            filter: i.filter,
-            max_price: i.max_price,
             sessions: i.sessions,
             on_session: i.on_session,
-            events: i.events,
             gates: i.gates,
-            listings: i.listings,
+            sink: i.sink,
+            cards: Mutex::new(Vec::new()),
             finished: AtomicBool::new(false),
             summary: Mutex::new(String::new()),
             lock: tokio::sync::Mutex::new(()),
@@ -110,18 +178,11 @@ impl ToolBox {
     }
 
     pub fn log(&self, message: impl Into<String>) {
-        let _ = self.events.send(SearchEvent::Log {
-            job: self.job.clone(),
-            agent: self.agent.clone(),
-            message: message.into(),
-        });
+        self.sink.log(&self.agent, message);
     }
 
     pub fn usage(&self, usage: Usage) {
-        if usage.is_empty() {
-            return;
-        }
-        let _ = self.events.send(SearchEvent::Usage { job: self.job.clone(), agent: Some(self.agent.clone()), usage });
+        self.sink.usage(Some(&self.agent), usage);
     }
 
     pub fn is_finished(&self) -> bool {
@@ -141,13 +202,13 @@ impl ToolBox {
         let empty = json!({ "type": "object", "properties": {}, "additionalProperties": false });
         vec![
             t("search_site",
-              "Abre direto a página de resultados de busca de um site atribuído a você. Prefira isto a navegar pela home.",
+              "Abre direto a página de resultados de busca da loja. Prefira isto a navegar pela home.",
               json!({ "type": "object", "properties": {
-                  "site_id": { "type": "string", "description": "id do site (ex.: mercadolivre, olx)" },
+                  "site_id": { "type": "string", "description": "id da loja" },
                   "query": { "type": "string", "description": "termo de busca curto" }
               }, "required": ["site_id", "query"], "additionalProperties": false })),
             t("extract_listings",
-              "Lê os cards de anúncios da página atual (título, preços, URL, texto extra). Barato e rápido: use logo após search_site.",
+              "Lê os cards de anúncios da página atual. Cada card ganha um id (#n) para report_listings. Preços do menor para o maior.",
               empty.clone()),
             t("snapshot",
               "Lista elementos interativos visíveis com referências [n] para click/type_text. Use só quando precisar interagir. 'filter' restringe por texto.",
@@ -164,26 +225,21 @@ impl ToolBox {
               json!({ "type": "object", "properties": { "direction": { "type": "string", "enum": ["down", "up"] } }, "additionalProperties": false })),
             t("open_url", "Abre uma URL (ex.: página de um anúncio para conferir detalhes).",
               json!({ "type": "object", "properties": { "url": { "type": "string" } }, "required": ["url"], "additionalProperties": false })),
-            t("read_text", "Lê o texto principal da página atual (útil na página de um anúncio).",
+            t("read_text", "Lê o texto da página atual, com seções recolhidas (especificações, \"ver mais\") abertas.",
               json!({ "type": "object", "properties": { "max_chars": { "type": "integer" } }, "additionalProperties": false })),
             t("go_back", "Volta para a página anterior.", empty.clone()),
             t("report_listings",
-              "Registra anúncios que correspondem ao produto pedido. Pode ser chamado várias vezes.",
+              "Registra anúncios que atendem ao plano. Use o id do card; price só se o primeiro preço do card não for o à vista atual.",
               json!({ "type": "object", "properties": {
                   "site_id": { "type": "string" },
-                  "listings": { "type": "array", "items": { "type": "object", "properties": {
-                      "title": { "type": "string" },
-                      "price": { "type": "number", "description": "preço à vista atual em reais, ex.: 1299.9" },
+                  "items": { "type": "array", "items": { "type": "object", "properties": {
+                      "id": { "type": "integer", "description": "id do card (#n) de extract_listings" },
                       "condition": { "type": "string", "enum": ["new", "used", "unknown"] },
-                      "url": { "type": "string" },
-                      "seller": { "type": "string" },
-                      "location": { "type": "string" },
-                      "shipping": { "type": "string" },
-                      "notes": { "type": "string" },
-                      "original_price": { "type": "number", "description": "preço riscado (antes do desconto) em reais, se o anúncio mostrar" },
-                      "international": { "type": "boolean", "description": "true se for venda internacional (enviada do exterior, sujeita a taxa de importação)" }
-                  }, "required": ["title", "price", "condition", "url"] } }
-              }, "required": ["site_id", "listings"], "additionalProperties": false })),
+                      "price": { "type": "number", "description": "preço à vista atual em reais, só para corrigir o do card" },
+                      "title": { "type": "string", "description": "só para anúncio fora dos cards" },
+                      "url": { "type": "string", "description": "só para anúncio fora dos cards" }
+                  }, "required": ["condition"] } }
+              }, "required": ["site_id", "items"], "additionalProperties": false })),
             t("request_human",
               "Pede ajuda ao usuário (ex.: login com 2FA, captcha que não passou). A janela do navegador é mostrada e você espera até ele terminar.",
               json!({ "type": "object", "properties": { "reason": { "type": "string" } }, "required": ["reason"], "additionalProperties": false })),
@@ -227,12 +283,10 @@ impl ToolBox {
                 if site.search_url.is_empty() {
                     let nav = self.navigate(&site.home()).await?;
                     return Ok(format!(
-                        "{nav}\nEste site não tem URL de busca conhecida. Use snapshot com filter \"busca\" ou \"pesquisar\" para achar o campo de busca e type_text com submit=true para buscar \"{q}\"."
+                        "{nav}\nEsta loja não tem URL de busca conhecida. Use snapshot com filter \"busca\" ou \"pesquisar\" para achar o campo de busca e type_text com submit=true para buscar \"{q}\"."
                     ));
                 }
-                let url = site.build_search_url(&q);
-                let nav = self.navigate(&url).await?;
-                Ok(nav)
+                self.navigate(&site.build_search_url(&q)).await
             }
             "open_url" => {
                 let url = s("url");
@@ -241,12 +295,12 @@ impl ToolBox {
                 }
                 self.navigate(&url).await
             }
-            "extract_listings" => self.page.extract_listings(40).await,
+            "extract_listings" => self.extract().await,
             "snapshot" => {
                 let f = s("filter");
-                self.page.snapshot(150, if f.is_empty() { None } else { Some(f.as_str()) }).await
+                self.page.snapshot(80, if f.is_empty() { None } else { Some(f.as_str()) }).await
             }
-            "read_text" => self.page.read_text(n("max_chars").unwrap_or(5000).min(10_000) as usize).await,
+            "read_text" => self.page.read_details(n("max_chars").unwrap_or(3000).min(6000) as usize).await,
             "click" => self.page.click_ref(n("ref").ok_or_else(|| anyhow::anyhow!("ref ausente"))? as u32).await,
             "type_text" => {
                 let r = n("ref").ok_or_else(|| anyhow::anyhow!("ref ausente"))? as u32;
@@ -273,7 +327,36 @@ impl ToolBox {
         }
     }
 
-    async fn navigate(&self, url: &str) -> anyhow::Result<String> {
+    async fn extract(&self) -> anyhow::Result<String> {
+        let found = self.page.extract_cards(MAX_CARDS).await?;
+        let here = self.page.url().await.unwrap_or_default();
+        if found.is_empty() {
+            return Ok(format!("Nenhum card com preço encontrado em {here}. Tente snapshot, scroll ou read_text."));
+        }
+        let mut cards = self.cards.lock();
+        let mut out = format!("URL: {here}\n");
+        for c in found {
+            // Mesmo card de uma leitura anterior: reaproveita o id.
+            let id = match cards.iter().position(|(x, _)| x.url == c.url && x.title == c.title) {
+                Some(i) => i + 1,
+                None => {
+                    cards.push((c.clone(), here.clone()));
+                    cards.len()
+                }
+            };
+            let prices = parse::sorted_prices(&c).into_iter().map(parse::format_brl).collect::<Vec<_>>().join(" / ");
+            let old = if c.old.is_empty() { String::new() } else { format!(" (riscado {})", c.old.join(", ")) };
+            let intl = if c.intl { " | INTERNACIONAL" } else { "" };
+            let url = if c.url.is_empty() { "SEM LINK" } else { c.url.as_str() };
+            let extra: String = c.extra.chars().take(100).collect();
+            out.push_str(&format!("#{id} | {prices}{old}{intl} | {} | {url} | {extra}\n", c.title));
+        }
+        Ok(out)
+    }
+
+    /// Abre a URL tratando bloqueio, desafio anti-bot e login (pede ajuda ao
+    /// usuário quando preciso). Devolve um resumo para o modelo.
+    pub async fn navigate(&self, url: &str) -> anyhow::Result<String> {
         let mut nav: NavInfo = self.page.goto(url).await?;
         if nav.challenge == ChallengeOutcome::Unsolved("blocked".into()) {
             // Bloqueio temporário na borda (403/429, "tente novamente em 1 minuto"):
@@ -285,7 +368,7 @@ impl ToolBox {
             if nav.challenge == ChallengeOutcome::Unsolved("blocked".into()) {
                 return Ok(format!(
                     "{host} está bloqueando o acesso temporariamente (erro 403 / limite de acessos), mesmo após esperar. \
-                     Não insista: siga para o próximo site e informe no resumo que {host} bloqueou."
+                     Não insista: informe no resumo que {host} bloqueou."
                 ));
             }
         }
@@ -295,7 +378,7 @@ impl ToolBox {
             let r = self.ask_human(HumanKind::Challenge, &reason, self.site_for(&host).map(|s| s.id.clone())).await?;
             nav = self.page.info(ChallengeOutcome::None).await?;
             if let Some(k) = self.page.detect_challenge().await {
-                return Ok(format!("{r}\nO site continua bloqueado ({k}). Siga para o próximo site."));
+                return Ok(format!("{r}\nA loja continua bloqueada ({k})."));
             }
         }
         if self.login_wall().await {
@@ -314,7 +397,7 @@ impl ToolBox {
                 }
                 nav = self.page.goto(url).await?;
                 if self.login_wall().await {
-                    return Ok(format!("{host} continua pedindo login. Siga para o próximo site."));
+                    return Ok(format!("{host} continua pedindo login."));
                 }
             } else {
                 return Ok(r);
@@ -347,8 +430,8 @@ impl ToolBox {
     }
 
     async fn ask_human(&self, kind: HumanKind, reason: &str, site: Option<String>) -> anyhow::Result<String> {
-        let _ = self.events.send(SearchEvent::NeedsHuman {
-            job: self.job.clone(),
+        let _ = self.sink.events.send(SearchEvent::NeedsHuman {
+            job: self.sink.job.clone(),
             agent: self.agent.clone(),
             site,
             kind,
@@ -360,88 +443,61 @@ impl ToolBox {
         }
         let r = self.gates.wait(&self.agent, Duration::from_secs(300)).await;
         let _ = self.page.set_visible(false).await;
-        let _ = self.events.send(SearchEvent::HumanResolved { job: self.job.clone(), agent: self.agent.clone() });
+        let _ = self.sink.events.send(SearchEvent::HumanResolved { job: self.sink.job.clone(), agent: self.agent.clone() });
         Ok(match r {
             Some(true) => "O usuário concluiu a ação manual. Continue.".into(),
-            Some(false) => "O usuário preferiu pular. Siga para o próximo site.".into(),
-            None => "Sem resposta do usuário (tempo esgotado). Siga para o próximo site.".into(),
+            Some(false) => "O usuário preferiu pular esta loja.".into(),
+            None => "Sem resposta do usuário (tempo esgotado).".into(),
         })
     }
 
     fn report(&self, input: &Value) -> anyhow::Result<String> {
         let site_id = input.get("site_id").and_then(Value::as_str).unwrap_or_default();
-        let site = self.all_sites.iter().find(|s| s.id == site_id);
-        let site_name = site.map(|s| s.name.clone()).unwrap_or_else(|| site_id.to_string());
-        let items = input.get("listings").and_then(Value::as_array).cloned().unwrap_or_default();
+        let site = self.all_sites.iter().find(|s| s.id == site_id).or(self.sites.first()).ok_or_else(|| anyhow::anyhow!("loja desconhecida"))?;
+        let items = input.get("items").or_else(|| input.get("listings")).and_then(Value::as_array).cloned().unwrap_or_default();
         let (mut added, mut skipped) = (0, Vec::new());
         for it in items {
-            let title = it["title"].as_str().unwrap_or_default().trim().to_string();
-            let url = it["url"].as_str().unwrap_or_default().trim().to_string();
-            let price = parse_price(&it["price"]);
             let condition = match it["condition"].as_str() {
                 Some("new") => Condition::New,
                 Some("used") => Condition::Used,
                 _ => Condition::Unknown,
             };
-            let Some(price) = price.filter(|p| p.is_finite() && *p > 0.0) else {
-                skipped.push(format!("'{title}': preço inválido"));
-                continue;
-            };
-            if title.is_empty() || !url.starts_with("http") {
-                skipped.push(format!("'{title}': título/URL inválidos"));
-                continue;
-            }
-            match (self.filter, condition) {
-                (ConditionFilter::New, Condition::Used) | (ConditionFilter::Used, Condition::New) => {
-                    skipped.push(format!("'{title}': condição diferente da pedida"));
-                    continue;
+            let given_price = parse_price(&it["price"]).filter(|p| p.is_finite() && *p > 0.0);
+            let listing = match it["id"].as_u64() {
+                Some(id) => {
+                    let Some((card, page)) = self.cards.lock().get((id as usize).wrapping_sub(1)).cloned() else {
+                        skipped.push(format!("#{id}: id desconhecido"));
+                        continue;
+                    };
+                    let Some(price) = given_price.or_else(|| parse::sorted_prices(&card).first().copied()) else {
+                        skipped.push(format!("#{id}: sem preço"));
+                        continue;
+                    };
+                    let mut l = listing_from_card(site, &card, price, condition, &page);
+                    if let Some(u) = it["url"].as_str().filter(|u| u.starts_with("http")) {
+                        l.url = u.to_string();
+                    }
+                    l
                 }
-                _ => {}
-            }
-            if self.max_price.is_some_and(|m| price > m) {
-                skipped.push(format!("'{title}': acima do preço máximo"));
-                continue;
-            }
-            let key = dedupe_key(&url, &title);
-            let mut all = self.listings.lock();
-            if all.iter().any(|l| dedupe_key(&l.url, &l.title) == key) {
-                continue;
-            }
-            let opt = |k: &str| it[k].as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
-            let listing = Listing {
-                id: uuid::Uuid::new_v4().to_string(),
-                site_id: site_id.to_string(),
-                site_name: site_name.clone(),
-                title,
-                price,
-                currency: "BRL".into(),
-                condition,
-                url,
-                seller: opt("seller"),
-                location: opt("location"),
-                shipping: opt("shipping"),
-                notes: opt("notes"),
-                original_price: parse_price(&it["original_price"]).filter(|p| p.is_finite() && *p > price),
-                international: it["international"].as_bool().unwrap_or(false),
+                None => {
+                    let title = it["title"].as_str().unwrap_or_default().to_string();
+                    let url = it["url"].as_str().unwrap_or_default().to_string();
+                    let card = Card { title, url, ..Default::default() };
+                    listing_from_card(site, &card, given_price.unwrap_or(0.0), condition, "")
+                }
             };
-            all.push(listing.clone());
-            drop(all);
-            added += 1;
-            let _ = self.events.send(SearchEvent::Listing {
-                job: self.job.clone(),
-                agent: self.agent.clone(),
-                listing: Box::new(listing),
-            });
+            let label = listing.title.chars().take(50).collect::<String>();
+            match self.sink.accept(&self.agent, listing) {
+                Ok(true) => added += 1,
+                Ok(false) => {}
+                Err(why) => skipped.push(format!("'{label}': {why}")),
+            }
         }
         let mut out = format!("{added} anúncio(s) registrado(s).");
         if !skipped.is_empty() {
             out.push_str(&format!(" Ignorados: {}", skipped.join("; ")));
         }
         Ok(out)
-    }
-
-    pub fn assigned_sites(&self) -> &[Site] {
-        &self.sites
     }
 }
 
@@ -450,21 +506,19 @@ fn parse_price(v: &Value) -> Option<f64> {
         return Some(f);
     }
     // Aceita "R$ 1.299,90" caso o modelo mande texto.
-    let s: String = v.as_str()?.chars().filter(|c| c.is_ascii_digit() || *c == ',' || *c == '.').collect();
-    let s = if s.contains(',') { s.replace('.', "").replace(',', ".") } else { s };
-    s.parse().ok()
+    v.as_str().and_then(parse::parse_brl)
 }
 
 /// Mesmo link + mesmo título = mesmo anúncio. Só o link não basta: em sites cujos
 /// cards não expõem o link do item (ex.: Shopee), vários anúncios diferentes
 /// chegam com o mesmo link de busca e seriam descartados como repetidos.
-fn dedupe_key(url: &str, title: &str) -> String {
+pub fn dedupe_key(url: &str, title: &str) -> String {
     let base = url.split(['?', '#']).next().unwrap_or(url).trim_end_matches('/').to_lowercase();
     let t: String = title.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
     format!("{base}|{t}")
 }
 
-fn host_of(u: &str) -> String {
+pub fn host_of(u: &str) -> String {
     url::Url::parse(u)
         .ok()
         .and_then(|x| x.host_str().map(|h| h.trim_start_matches("www.").to_string()))
@@ -497,7 +551,7 @@ fn describe(name: &str, input: &Value) -> Option<String> {
         "read_text" => "lendo detalhes do anúncio".into(),
         "go_back" => "voltando".into(),
         "report_listings" => {
-            let n = input.get("listings").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+            let n = input.get("items").or_else(|| input.get("listings")).and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
             format!("registrando {n} anúncio(s) de {}", s("site_id"))
         }
         "request_human" => format!("pedindo ajuda: {}", s("reason")),

@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use snipr_core::{AgentMode, ConditionFilter, Engine, SearchEvent, SearchRequest};
+use snipr_core::{ConditionFilter, Engine, SearchEvent, SearchRequest};
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
@@ -29,7 +29,6 @@ fn main() -> anyhow::Result<()> {
                 query,
                 condition: ConditionFilter::Any,
                 sites,
-                mode: Some(AgentMode::Single),
                 max_price: None,
                 plan: None,
             },

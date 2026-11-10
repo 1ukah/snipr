@@ -134,7 +134,7 @@ mod tests {
     use super::*;
     use crate::{
         sites::default_sites,
-        tools::{HumanGates, ToolBoxInit},
+        tools::{HumanGates, Sink, ToolBoxInit},
         types::{ConditionFilter, SearchEvent},
     };
     use snipr_browser::{Browser, BrowserMode, LaunchOptions};
@@ -160,19 +160,16 @@ mod tests {
         let page = browser.new_page().await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let sites = default_sites();
+        let sink = Arc::new(Sink { job: "t".into(), events: tx, listings: Default::default(), filter: ConditionFilter::Any, max_price: None });
         let tools = Arc::new(ToolBox::new(ToolBoxInit {
-            job: "t".into(),
             agent: "t-0".into(),
             page: page.clone(),
             sites: sites.clone(),
             all_sites: sites,
-            filter: ConditionFilter::Any,
-            max_price: None,
             sessions: Default::default(),
             on_session: Arc::new(|_, _| {}),
-            events: tx,
             gates: Arc::new(HumanGates::default()),
-            listings: Default::default(),
+            sink: sink.clone(),
         }));
         let server = McpServer::start().await.unwrap();
         server.register("t-0", tools.clone());
@@ -196,12 +193,12 @@ mod tests {
         println!("extract_listings →\n{}", text.lines().take(5).collect::<Vec<_>>().join("\n"));
         assert!(text.contains("R$"), "nenhum preço extraído");
 
-        let r = rpc(&http, &url, server.token(), call(5, "report_listings", json!({"site_id":"olx","listings":[
-            {"title":"Cadeira DT3 N10 XL","price":2499,"condition":"used","url":"https://sp.olx.com.br/x/cadeira-n10-xl-1","location":"São Paulo/SP"},
+        let r = rpc(&http, &url, server.token(), call(5, "report_listings", json!({"site_id":"olx","items":[
+            {"id":1,"condition":"used"},
             {"title":"Peça sem preço","price":0,"condition":"used","url":"https://olx.com.br/y"}
         ]}))).await;
         println!("report_listings → {}", r["result"]["content"][0]["text"]);
-        assert_eq!(tools.listings.lock().len(), 1);
+        assert_eq!(sink.listings.lock().len(), 1);
 
         let mut n = 0;
         while let Ok(ev) = rx.try_recv() {

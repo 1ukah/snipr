@@ -24,8 +24,18 @@ dotenvy.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 ts-rs = { version = "10", features = ["serde-compat", "no-serde-warnings"] }
+reqwest.workspace = true
+wreq.workspace = true
+wreq-util.workspace = true
+scraper.workspace = true
+ego-tree.workspace = true
+regex.workspace = true
+futures-util.workspace = true
 
 # Cofre de segredos nativo de cada sistema operacional.
+[dev-dependencies]
+tracing-subscriber.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
 
@@ -35,5 +45,4 @@ keyring = { version = "3", features = ["apple-native"] }
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 
-[dev-dependencies]
-reqwest.workspace = true
+

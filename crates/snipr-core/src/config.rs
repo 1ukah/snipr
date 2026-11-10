@@ -6,8 +6,8 @@ use snipr_browser::BrowserMode;
 use ts_rs::TS;
 
 use crate::{
-    sites::{default_enabled, default_sites, Site},
-    types::{AgentMode, Condition},
+    sites::{default_enabled, default_sites, Site, StageInfo},
+    types::Condition,
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default, TS)]
@@ -99,7 +99,10 @@ pub struct AiSettings {
     pub key_provider: Provider,
     pub oauth_provider: Provider,
     pub endpoint: String,
+    /// Modelo do agent (lojas sem leitura automática). Vazio = padrão do provedor.
     pub model: String,
+    /// Modelo das chamadas curtas: plano e filtro dos anúncios. Vazio = automático.
+    pub fast_model: String,
     pub effort: String,
     pub cli_path: String,
 }
@@ -113,6 +116,7 @@ impl Default for AiSettings {
             oauth_provider: Provider::Anthropic,
             endpoint: String::new(),
             model: String::new(),
+            fast_model: String::new(),
             effort: String::new(),
             cli_path: String::new(),
         }
@@ -153,12 +157,13 @@ pub enum SessionState {
 pub struct Settings {
     pub theme: Theme,
     pub ai: AiSettings,
-    pub agent_mode: AgentMode,
     #[ts(type = "\"hidden\" | \"headless\" | \"visible\"")]
     pub browser_mode: BrowserMode,
     pub block_media: bool,
     pub low_memory: bool,
+    /// Abas do Chrome usadas ao mesmo tempo.
     pub max_parallel: usize,
+    /// Passos máximos do agent em uma loja sem leitura automática.
     pub max_steps: usize,
     #[ts(type = "number")]
     pub idle_close_secs: u64,
@@ -171,6 +176,10 @@ pub struct Settings {
     pub removed_sites: Vec<String>,
     pub sessions: HashMap<String, SessionState>,
     pub login_overrides: HashMap<String, bool>,
+    /// Etapa verificada de cada loja (padrão ou personalizada).
+    pub site_stages: HashMap<String, StageInfo>,
+    /// Formato do arquivo de ajustes (para migrar valores antigos).
+    pub version: u32,
 }
 
 impl Default for Settings {
@@ -178,12 +187,12 @@ impl Default for Settings {
         Self {
             theme: Theme::Dark,
             ai: AiSettings::default(),
-            agent_mode: AgentMode::Multi,
             browser_mode: BrowserMode::Hidden,
             block_media: true,
             low_memory: true,
             max_parallel: 4,
-            max_steps: 60,
+            max_steps: 15,
+            // As janelas fecham 1 min depois da busca; o Chrome vazio, depois disto.
             idle_close_secs: 300,
             chrome_path: String::new(),
             enabled_sites: default_enabled(),
@@ -194,6 +203,8 @@ impl Default for Settings {
             removed_sites: Vec::new(),
             sessions: HashMap::new(),
             login_overrides: HashMap::new(),
+            site_stages: HashMap::new(),
+            version: 2,
         }
     }
 }
@@ -212,6 +223,14 @@ impl Settings {
         for s in &mut sites {
             if let Some(v) = self.login_overrides.get(&s.id) {
                 s.requires_login = *v;
+            }
+            if let Some(info) = self.site_stages.get(&s.id) {
+                s.stage = Some(info.stage);
+                s.api = info.api;
+                s.json_url = info.json_url.clone();
+                if !info.search_url.is_empty() {
+                    s.search_url = info.search_url.clone();
+                }
             }
         }
         sites
@@ -239,10 +258,21 @@ impl Paths {
     }
 
     pub fn load_settings(&self) -> Settings {
-        std::fs::read_to_string(&self.config_file)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        let Some(raw) = std::fs::read_to_string(&self.config_file).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        else {
+            return Settings::default();
+        };
+        let version = raw.get("version").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let mut s: Settings = serde_json::from_value(raw).unwrap_or_default();
+        // Ajustes de versões anteriores: troca só os valores que ainda são os padrões antigos.
+        if version < 1 && s.max_steps == 60 {
+            s.max_steps = 15;
+        }
+        if version < 2 && s.idle_close_secs == 1800 {
+            s.idle_close_secs = 300;
+        }
+        s.version = Settings::default().version;
+        s
     }
 
     pub fn save_settings(&self, s: &Settings) -> Result<()> {

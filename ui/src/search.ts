@@ -349,7 +349,9 @@ function renderAgents() {
   $('#t-progress').setAttribute('aria-checked', String(state.progress));
   box.hidden = !state.progress || !list.length;
   if (box.hidden) return;
+  const done = list.filter((a) => a.st === 'ok' || a.st === 'fail').length;
   box.replaceChildren(
+    el('div', { class: 'fl' }, icon('i-pulse'), el('span', { text: t.progress }), el('span', { class: 'n', text: `${done}/${list.length}` })),
     ...list.map((a) =>
       el(
         'div',
@@ -408,6 +410,9 @@ async function launch(req: SearchRequest, main: boolean) {
     const job = await api.startSearch(req);
     state.jobs.set(job, { sites: req.sites, conds: condsOf(req.condition), main });
     state.running.add(job);
+    const early = pending.get(job);
+    pending.delete(job);
+    early?.forEach(onEvent);
     return true;
   } catch (e) {
     toast(errText(e));
@@ -437,7 +442,7 @@ async function startNew(keepPlan = false) {
   state.human.clear();
   renderPlan();
   renderHuman();
-  const ok = await launch({ query, condition: condFilter(state.cond), sites: [...state.selected], mode: null, max_price: state.hi, plan }, true);
+  const ok = await launch({ query, condition: condFilter(state.cond), sites: [...state.selected], max_price: state.hi, plan }, true);
   setRunningUi();
   if (ok) {
     countSearch();
@@ -449,7 +454,7 @@ async function startMissing() {
   const newSites = [...state.selected].filter((id) => !state.searchedSites.has(id));
   const oldSites = [...state.selected].filter((id) => state.searchedSites.has(id));
   const missing = [...state.cond].filter((c) => !state.searchedCond.has(c));
-  const base = { query: state.query, mode: null, max_price: null, plan: state.plan };
+  const base = { query: state.query, max_price: null, plan: state.plan };
   state.startedAt = Date.now();
   state.elapsed = null;
   if (newSites.length) await launch({ ...base, sites: newSites, condition: condFilter(state.cond) }, false);
@@ -473,9 +478,17 @@ function stopAll(silent = false): Promise<void> {
   return stopping;
 }
 
+// Events can arrive before startSearch resolves with the job id; hold them until the job is known.
+const pending = new Map<string, SearchEvent[]>();
+
 function onEvent(ev: SearchEvent) {
   const meta = state.jobs.get(ev.job);
-  if (!meta) return;
+  if (!meta) {
+    const q = pending.get(ev.job) ?? [];
+    q.push(ev);
+    pending.set(ev.job, q);
+    return;
+  }
   switch (ev.type) {
     case 'started':
       for (const a of ev.agents) state.agents.set(a.id, { job: ev.job, label: a.label, sites: a.sites, st: 'wait', pct: 0, msg: t.queued });
