@@ -6,4 +6,4 @@ import type { SessionState } from "./SessionState";
 import type { Site } from "./Site";
 import type { Theme } from "./Theme";
 
-export type Settings = { theme: Theme, ai: AiSettings, agent_mode: AgentMode, browser_mode: "hidden" | "headless" | "visible", block_media: boolean, low_memory: boolean, max_parallel: number, max_steps: number, idle_close_secs: number, chrome_path: string, enabled_sites: Array<string>, conditions: Array<Condition>, show_international: boolean, custom_sites: Array<Site>, removed_sites: Array<string>, sessions: { [key in string]?: SessionState }, login_overrides: { [key in string]?: boolean }, };
+export type Settings = { theme: Theme, ai: AiSettings, agent_mode: AgentMode, browser_mode: "hidden" | "headless" | "visible", block_media: boolean, low_memory: boolean, max_parallel: number, max_steps: number, idle_close_secs: number, chrome_path: string, enabled_sites: Array<string>, conditions: Array<Condition>, show_international: boolean, status_bar: boolean, custom_sites: Array<Site>, removed_sites: Array<string>, sessions: { [key in string]?: SessionState }, login_overrides: { [key in string]?: boolean }, };

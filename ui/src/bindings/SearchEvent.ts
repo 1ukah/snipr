@@ -3,5 +3,6 @@ import type { AgentInfo } from "./AgentInfo";
 import type { HumanKind } from "./HumanKind";
 import type { Listing } from "./Listing";
 import type { SearchPlan } from "./SearchPlan";
+import type { Usage } from "./Usage";
 
-export type SearchEvent = { "type": "started", job: string, agents: Array<AgentInfo>, } | { "type": "planned", job: string, plan: SearchPlan, } | { "type": "log", job: string, agent: string, message: string, } | { "type": "listing", job: string, agent: string, listing: Listing, } | { "type": "needs_human", job: string, agent: string, site: string | null, kind: HumanKind, reason: string, } | { "type": "human_resolved", job: string, agent: string, } | { "type": "agent_finished", job: string, agent: string, ok: boolean, summary: string, } | { "type": "finished", job: string, total: number, elapsed_ms: number, cancelled: boolean, };
+export type SearchEvent = { "type": "started", job: string, agents: Array<AgentInfo>, } | { "type": "planned", job: string, plan: SearchPlan, } | { "type": "log", job: string, agent: string, message: string, } | { "type": "listing", job: string, agent: string, listing: Listing, } | { "type": "needs_human", job: string, agent: string, site: string | null, kind: HumanKind, reason: string, } | { "type": "human_resolved", job: string, agent: string, } | { "type": "agent_finished", job: string, agent: string, ok: boolean, summary: string, } | { "type": "usage", job: string, agent: string | null, usage: Usage, } | { "type": "finished", job: string, total: number, elapsed_ms: number, cancelled: boolean, };

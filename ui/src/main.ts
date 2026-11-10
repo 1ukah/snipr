@@ -5,6 +5,7 @@ import '@fontsource/hanken-grotesk/700.css';
 import './styles.css';
 import { finishLogin, renderAccounts } from './accounts';
 import { $, $$, errText, toast, translate } from './dom';
+import { initFooter } from './footer';
 import { closePop, isPopOpen } from './popover';
 import { initSearch, render } from './search';
 import { initSettings, renderSettings } from './settings';
@@ -68,6 +69,7 @@ async function boot() {
   wire();
   initSearch();
   initSettings();
+  initFooter();
   initStores(render);
   try {
     await reloadSites();

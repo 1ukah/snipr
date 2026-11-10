@@ -10,7 +10,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
 
-use crate::{agent::short, config::Provider, tools::ToolBox};
+use crate::{agent::short, config::Provider, tools::ToolBox, types::Usage};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CliKind {
@@ -204,7 +204,7 @@ fn build(run: &CliRun, system: &str, prompt: String, mcp: Option<&Mcp>, last_mes
                     .arg(&mcp_path)
                     .args(["--strict-mcp-config", "--allowedTools", "mcp__snipr"]);
             } else {
-                cmd.args(["--output-format", "text"]);
+                cmd.args(["--output-format", "stream-json", "--verbose"]);
             }
             if let Some(m) = model {
                 cmd.args(["--model", m]);
@@ -228,9 +228,9 @@ fn build(run: &CliRun, system: &str, prompt: String, mcp: Option<&Mcp>, last_mes
             for f in ["shell_tool", "unified_exec", "view_image", "browser_use", "browser_use_external", "computer_use", "in_app_browser", "apps", "plugins"] {
                 cmd.args(["--disable", f]);
             }
+            cmd.arg("--json");
             if let Some(m) = mcp {
-                cmd.arg("--json")
-                    .args(["-c", &format!("mcp_servers.snipr.url={}", toml_str(&m.url))])
+                cmd.args(["-c", &format!("mcp_servers.snipr.url={}", toml_str(&m.url))])
                     .args(["-c", "mcp_servers.snipr.bearer_token_env_var=\"SNIPR_MCP_TOKEN\""])
                     .args(["-c", "mcp_servers.snipr.required=true"])
                     .args(["-c", "mcp_servers.snipr.default_tools_approval_mode=\"approve\""])
@@ -356,6 +356,27 @@ async fn exec(
     Ok(Output { ok: status.success(), status: status.to_string(), last_text: text.trim().to_string(), stderr })
 }
 
+fn usage_of(kind: CliKind, v: &Value, model: &Option<String>) -> Option<Usage> {
+    let u = &v["usage"];
+    let n = |k: &str| u[k].as_u64().unwrap_or(0);
+    match (kind, v["type"].as_str()) {
+        (CliKind::Claude, Some("result")) => Some(Usage {
+            input_tokens: n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens"),
+            output_tokens: n("output_tokens"),
+            cost_usd: v["total_cost_usd"].as_f64(),
+            model: model.clone(),
+        }),
+        (CliKind::Codex, Some("turn.completed")) => {
+            Some(Usage { input_tokens: n("input_tokens"), output_tokens: n("output_tokens"), cost_usd: None, model: model.clone() })
+        }
+        _ => None,
+    }
+}
+
+fn init_model(kind: CliKind, v: &Value) -> Option<String> {
+    (kind == CliKind::Claude && v["type"] == "system" && v["subtype"] == "init").then(|| v["model"].as_str().map(String::from)).flatten()
+}
+
 fn failure(kind: CliKind, out: &Output) -> anyhow::Error {
     let all = format!("{}\n{}", out.stderr, out.last_text);
     let low = all.to_lowercase();
@@ -373,46 +394,55 @@ pub async fn run_agent(run: CliRun, system: &str, task: String, tools: Arc<ToolB
     let kind = run.kind;
     let mut result: Option<(bool, String)> = None;
     let mut last_message = String::new();
-    let out = exec(kind, cmd, input, &cancel, true, |v| match kind {
-        CliKind::Claude => match v["type"].as_str() {
-            Some("assistant") => {
-                for block in v["message"]["content"].as_array().into_iter().flatten() {
-                    if block["type"] == "text" {
-                        let t = block["text"].as_str().unwrap_or_default().trim();
-                        if !t.is_empty() {
-                            tools.log(short(t));
+    let mut model = run.model.clone();
+    let out = exec(kind, cmd, input, &cancel, true, |v| {
+        if let Some(m) = init_model(kind, v) {
+            model = Some(m);
+        }
+        if let Some(u) = usage_of(kind, v, &model) {
+            tools.usage(u);
+        }
+        match kind {
+            CliKind::Claude => match v["type"].as_str() {
+                Some("assistant") => {
+                    for block in v["message"]["content"].as_array().into_iter().flatten() {
+                        if block["type"] == "text" {
+                            let t = block["text"].as_str().unwrap_or_default().trim();
+                            if !t.is_empty() {
+                                tools.log(short(t));
+                            }
                         }
                     }
                 }
-            }
-            Some("result") => {
-                let is_error = v["is_error"].as_bool().unwrap_or(false);
-                if let Some(cost) = v["total_cost_usd"].as_f64() {
-                    tools.log(format!("custo estimado da sessão: US$ {cost:.3}"));
+                Some("result") => {
+                    let is_error = v["is_error"].as_bool().unwrap_or(false);
+                    if let Some(cost) = v["total_cost_usd"].as_f64() {
+                        tools.log(format!("custo estimado da sessão: US$ {cost:.3}"));
+                    }
+                    result = Some((is_error, v["result"].as_str().unwrap_or_default().to_string()));
                 }
-                result = Some((is_error, v["result"].as_str().unwrap_or_default().to_string()));
-            }
-            Some("system") if v["subtype"] == "init" => {
-                let ok = v["mcp_servers"].as_array().into_iter().flatten().any(|s| s["name"] == "snipr" && s["status"] == "connected");
-                if !ok {
-                    tools.log("aviso: o Claude Code não confirmou a conexão MCP com o Snipr");
+                Some("system") if v["subtype"] == "init" => {
+                    let ok = v["mcp_servers"].as_array().into_iter().flatten().any(|s| s["name"] == "snipr" && s["status"] == "connected");
+                    if !ok {
+                        tools.log("aviso: o Claude Code não confirmou a conexão MCP com o Snipr");
+                    }
                 }
-            }
-            _ => {}
-        },
-        CliKind::Codex => match v["type"].as_str() {
-            Some("item.completed") if v["item"]["type"] == "agent_message" => {
-                let t = v["item"]["text"].as_str().unwrap_or_default().trim().to_string();
-                if !t.is_empty() {
-                    tools.log(short(&t));
-                    last_message = t;
+                _ => {}
+            },
+            CliKind::Codex => match v["type"].as_str() {
+                Some("item.completed") if v["item"]["type"] == "agent_message" => {
+                    let t = v["item"]["text"].as_str().unwrap_or_default().trim().to_string();
+                    if !t.is_empty() {
+                        tools.log(short(&t));
+                        last_message = t;
+                    }
                 }
-            }
-            Some("turn.failed") => result = Some((true, v["error"]["message"].as_str().unwrap_or_default().to_string())),
-            Some("error") => result = Some((true, v["message"].as_str().unwrap_or_default().to_string())),
-            _ => {}
-        },
-        CliKind::Antigravity => {}
+                Some("turn.failed") => result = Some((true, v["error"]["message"].as_str().unwrap_or_default().to_string())),
+                Some("error") => result = Some((true, v["message"].as_str().unwrap_or_default().to_string())),
+                _ => {}
+            },
+            CliKind::Antigravity => {}
+        }
     })
     .await?;
     let summary = tools.summary();
@@ -429,17 +459,35 @@ pub async fn run_agent(run: CliRun, system: &str, task: String, tools: Arc<ToolB
     }
 }
 
-pub async fn run_text(run: CliRun, system: &str, prompt: String, cancel: CancellationToken) -> Result<String> {
+pub async fn run_text(run: CliRun, system: &str, prompt: String, cancel: CancellationToken) -> Result<(String, Usage)> {
     let last_path = run.dir.join("last-message.txt");
     let _ = std::fs::remove_file(&last_path);
     let (cmd, input) = build(&run, system, prompt, None, &last_path)?;
     let kind = run.kind;
-    let out = exec(kind, cmd, input, &cancel, false, |_| {}).await?;
+    let mut model = run.model.clone();
+    let mut usage = Usage::default();
+    let mut result = String::new();
+    let out = exec(kind, cmd, input, &cancel, kind != CliKind::Antigravity, |v| {
+        if let Some(m) = init_model(kind, v) {
+            model = Some(m);
+        }
+        if let Some(u) = usage_of(kind, v, &model) {
+            usage.input_tokens += u.input_tokens;
+            usage.output_tokens += u.output_tokens;
+            usage.cost_usd = u.cost_usd.map(|c| c + usage.cost_usd.unwrap_or(0.0)).or(usage.cost_usd);
+            usage.model = u.model;
+        }
+        if kind == CliKind::Claude && v["type"] == "result" {
+            result = v["result"].as_str().unwrap_or_default().to_string();
+        }
+    })
+    .await?;
     if !out.ok {
         return Err(failure(kind, &out));
     }
     let from_file = std::fs::read_to_string(&last_path).unwrap_or_default();
-    Ok(if from_file.trim().is_empty() { out.last_text } else { from_file })
+    let text = [result, from_file].into_iter().find(|t| !t.trim().is_empty()).unwrap_or(out.last_text);
+    Ok((text, usage))
 }
 
 #[cfg(test)]

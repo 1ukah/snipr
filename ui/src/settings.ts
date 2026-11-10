@@ -4,6 +4,7 @@ import type { CliStatus } from './bindings/CliStatus';
 import type { Provider } from './bindings/Provider';
 import type { Settings } from './bindings/Settings';
 import { $, el, errText, fold, icon, toast } from './dom';
+import { renderFooter } from './footer';
 import { closePop, segment, select, togglePop } from './popover';
 import { applyTheme, saveSettings, state } from './state';
 import { installUrl, t } from './strings';
@@ -318,6 +319,10 @@ export function renderSettings() {
     onChange: (v) => saveAi({ effort: v }),
   });
   renderAi();
+  toggle('#t-footer', s.status_bar, (v) => {
+    saveSettings({ status_bar: v });
+    renderFooter();
+  });
 
   const why = (m: string) => ($('#why-a').textContent = m === 'single' ? t.whySingle : t.whyMulti);
   segment(

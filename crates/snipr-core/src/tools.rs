@@ -20,7 +20,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::{
     config::SessionState,
     sites::Site,
-    types::{Condition, ConditionFilter, HumanKind, Listing, SearchEvent},
+    types::{Condition, ConditionFilter, HumanKind, Listing, SearchEvent, Usage},
 };
 
 pub type SessionHook = Arc<dyn Fn(&str, bool) + Send + Sync>;
@@ -115,6 +115,13 @@ impl ToolBox {
             agent: self.agent.clone(),
             message: message.into(),
         });
+    }
+
+    pub fn usage(&self, usage: Usage) {
+        if usage.is_empty() {
+            return;
+        }
+        let _ = self.events.send(SearchEvent::Usage { job: self.job.clone(), agent: Some(self.agent.clone()), usage });
     }
 
     pub fn is_finished(&self) -> bool {

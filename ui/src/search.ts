@@ -4,6 +4,7 @@ import type { SearchEvent } from './bindings/SearchEvent';
 import type { SearchPlan } from './bindings/SearchPlan';
 import type { SearchRequest } from './bindings/SearchRequest';
 import { $, $$, el, errText, fold, icon, toast } from './dom';
+import { addUsage, countSearch, renderFooter } from './footer';
 import { closePop, togglePop } from './popover';
 import { type Cond, saveSettings, siteById, state } from './state';
 import { t } from './strings';
@@ -390,6 +391,7 @@ export function render() {
   renderMore();
   renderList();
   renderAgents();
+  renderFooter();
 }
 
 /* ---------- running searches ---------- */
@@ -437,7 +439,10 @@ async function startNew(keepPlan = false) {
   renderHuman();
   const ok = await launch({ query, condition: condFilter(state.cond), sites: [...state.selected], mode: null, max_price: state.hi, plan }, true);
   setRunningUi();
-  if (ok) render();
+  if (ok) {
+    countSearch();
+    render();
+  }
 }
 
 async function startMissing() {
@@ -524,6 +529,9 @@ function onEvent(ev: SearchEvent) {
       state.human.delete(ev.agent);
       renderHuman();
       break;
+    case 'usage':
+      addUsage(ev.usage);
+      break;
     case 'agent_finished': {
       const a = state.agents.get(ev.agent);
       if (a) {
@@ -538,6 +546,7 @@ function onEvent(ev: SearchEvent) {
         }
       }
       renderAgents();
+      renderFooter();
       break;
     }
     case 'finished': {

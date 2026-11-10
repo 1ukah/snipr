@@ -129,6 +129,7 @@ pub enum SearchEvent {
     NeedsHuman { job: String, agent: String, site: Option<String>, kind: HumanKind, reason: String },
     HumanResolved { job: String, agent: String },
     AgentFinished { job: String, agent: String, ok: bool, summary: String },
+    Usage { job: String, agent: Option<String>, usage: Usage },
     Finished { job: String, total: usize, #[ts(type = "number")] elapsed_ms: u128, cancelled: bool },
 }
 
@@ -138,4 +139,30 @@ pub struct AgentInfo {
     pub id: String,
     pub label: String,
     pub sites: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, TS)]
+#[ts(export)]
+pub struct Usage {
+    #[ts(type = "number")]
+    pub input_tokens: u64,
+    #[ts(type = "number")]
+    pub output_tokens: u64,
+    pub cost_usd: Option<f64>,
+    pub model: Option<String>,
+}
+
+impl Usage {
+    pub fn from_turn(t: &snipr_llm::Turn) -> Self {
+        Self {
+            input_tokens: t.input_tokens,
+            output_tokens: t.output_tokens,
+            cost_usd: t.cost_usd,
+            model: Some(t.model.clone()).filter(|m| !m.is_empty()),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.input_tokens == 0 && self.output_tokens == 0 && self.cost_usd.is_none()
+    }
 }

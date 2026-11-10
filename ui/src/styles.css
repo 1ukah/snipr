@@ -290,6 +290,17 @@ button.card:hover .act { color: var(--fg); }
   .m-body { overflow-y: auto; }
   .strip, .strip.two { padding: 2px 16px; grid-template-columns: minmax(0, 1fr); max-height: none; overflow: visible; }
 }
+/* footer */
+.foot { flex: none; display: flex; align-items: center; gap: 24px; min-height: 34px; padding-block: 3px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--fg-3); white-space: nowrap; overflow: hidden; }
+.foot .cfg, .foot .stats { display: flex; align-items: center; gap: 20px; min-width: 0; }
+.foot .stats { margin-left: auto; gap: 16px; }
+.foot .fi { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.foot .fi svg.i { width: 13px; height: 13px; }
+.foot .fi .v { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.foot .ib.sm { width: 24px; height: 24px; margin-left: -8px; }
+.foot .ib.sm svg.i { width: 13px; height: 13px; }
+.has-foot .toast { bottom: 54px; }
+
 .toast { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 50; background: var(--fg); color: var(--bg); padding: 9px 15px; border-radius: 7px; font-size: 14px; white-space: nowrap; }
 
 @media (max-width: 860px) {
@@ -309,6 +320,9 @@ button.card:hover .act { color: var(--fg); }
   .pair2 { grid-template-columns: minmax(0, 1fr); }
   .seg button svg.i { display: none; }
   .sheet { padding: 0 16px 28px; }
+  .foot .cfg { display: none; }
+  .foot .stats { margin-left: 0; flex: 1; }
+  .foot .stats .fi:nth-of-type(2) { margin-left: auto; }
 }
 @media (max-width: 560px) { .tb .lbl { display: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

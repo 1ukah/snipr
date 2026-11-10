@@ -40,6 +40,8 @@ pub struct Turn {
     pub tool_calls: Vec<ToolCall>,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cost_usd: Option<f64>,
+    pub model: String,
 }
 
 #[async_trait::async_trait]

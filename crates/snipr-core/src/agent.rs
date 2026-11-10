@@ -6,7 +6,7 @@ use anyhow::{bail, Result};
 use snipr_llm::{ChatSession, ToolResult};
 use tokio_util::sync::CancellationToken;
 
-use crate::tools::ToolBox;
+use crate::{tools::ToolBox, types::Usage};
 
 pub async fn run_chat_agent(
     mut session: Box<dyn ChatSession>,
@@ -23,6 +23,7 @@ pub async fn run_chat_agent(
     for _ in 0..max_steps {
         tokens.0 += turn.input_tokens;
         tokens.1 += turn.output_tokens;
+        tools.usage(Usage::from_turn(&turn));
         let text = turn.text.trim();
         if !text.is_empty() {
             tools.log(short(text));

@@ -30,7 +30,7 @@ use crate::{
     prompts, secrets,
     sites::{self, Site, Suggestion},
     tools::{HumanGates, SessionHook, ToolBox, ToolBoxInit},
-    types::{AgentInfo, AgentMode, Listing, SearchEvent, SearchPlan, SearchRequest},
+    types::{AgentInfo, AgentMode, Listing, SearchEvent, SearchPlan, SearchRequest, Usage},
 };
 
 pub type EventSink = mpsc::UnboundedSender<SearchEvent>;
@@ -266,32 +266,43 @@ impl Engine {
     }
 
     pub async fn plan_with(&self, ai: &AiSettings, query: &str, cancel: CancellationToken) -> SearchPlan {
+        self.plan_usage(ai, query, cancel).await.0
+    }
+
+    async fn plan_usage(&self, ai: &AiSettings, query: &str, cancel: CancellationToken) -> (SearchPlan, Usage) {
         let local = prompts::local_plan(query);
         let dir = self.paths.work_dir.join("planner");
         let run = async {
             let backend = self.backend(ai, dir)?;
-            let text = match backend {
+            let (text, usage) = match backend {
                 Backend::Cli(run) => cli::run_text(run, prompts::PLANNER, prompts::planner_input(query), cancel.clone()).await?,
                 ref chat => {
                     let mut session = Self::chat(chat, prompts::PLANNER, false).ok_or_else(|| anyhow!("sem sessão"))?;
-                    session.user(prompts::planner_input(query)).await?.text
+                    let turn = session.user(prompts::planner_input(query)).await?;
+                    let usage = Usage::from_turn(&turn);
+                    (turn.text, usage)
                 }
             };
-            prompts::parse_plan(&text, query).ok_or_else(|| anyhow!("resposta sem plano"))
+            let plan = prompts::parse_plan(&text, query).ok_or_else(|| anyhow!("resposta sem plano"));
+            Ok::<_, anyhow::Error>((plan, usage))
         };
         match tokio::time::timeout(Duration::from_secs(120), run).await {
-            Ok(Ok(mut plan)) => {
+            Ok(Ok((Ok(mut plan), usage))) => {
                 plan.max_price = plan.max_price.or(local.max_price);
                 plan.condition = plan.condition.or(local.condition);
-                plan
+                (plan, usage)
+            }
+            Ok(Ok((Err(e), usage))) => {
+                tracing::warn!("plano de busca indisponível: {e:#}");
+                (local, usage)
             }
             Ok(Err(e)) => {
                 tracing::warn!("plano de busca indisponível: {e:#}");
-                local
+                (local, Usage::default())
             }
             Err(_) => {
                 tracing::warn!("plano de busca demorou demais");
-                local
+                (local, Usage::default())
             }
         }
     }
@@ -643,15 +654,18 @@ impl Engine {
         let _ = sink.send(SearchEvent::Started { job: job.into(), agents: agents.clone() });
 
         let given = req.plan.take();
-        let (plan, browser) = tokio::join!(
+        let ((plan, usage), browser) = tokio::join!(
             async {
                 match given {
-                    Some(p) => p,
-                    None => self.plan(&req.query, cancel.clone()).await,
+                    Some(p) => (p, Usage::default()),
+                    None => self.plan_usage(&settings.ai, &req.query, cancel.clone()).await,
                 }
             },
             self.browser()
         );
+        if !usage.is_empty() {
+            let _ = sink.send(SearchEvent::Usage { job: job.into(), agent: None, usage });
+        }
         if cancel.is_cancelled() {
             return;
         }

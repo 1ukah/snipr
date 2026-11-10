@@ -100,10 +100,17 @@ impl AnthropicSession {
         // O conteúdo volta exatamente como veio (inclui blocos de raciocínio).
         self.messages.push(json!({ "role": "assistant", "content": content }));
 
+        let u = &v["usage"];
+        let fresh = u["input_tokens"].as_u64().unwrap_or(0);
+        let read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+        let write = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+        let output = u["output_tokens"].as_u64().unwrap_or(0);
+        let model = v["model"].as_str().unwrap_or(&self.cfg.model).to_string();
         let mut turn = Turn {
-            input_tokens: v["usage"]["input_tokens"].as_u64().unwrap_or(0)
-                + v["usage"]["cache_read_input_tokens"].as_u64().unwrap_or(0),
-            output_tokens: v["usage"]["output_tokens"].as_u64().unwrap_or(0),
+            input_tokens: fresh + read + write,
+            output_tokens: output,
+            cost_usd: cost(&model, fresh, read, write, output),
+            model,
             ..Default::default()
         };
         for block in content.as_array().into_iter().flatten() {
@@ -128,6 +135,29 @@ impl AnthropicSession {
         }
         Ok(turn)
     }
+}
+
+fn price(model: &str) -> Option<(f64, f64, f64)> {
+    let m = model.strip_prefix("anthropic.").unwrap_or(model);
+    Some(match m {
+        _ if m.starts_with("claude-fable-5-1") || m.starts_with("claude-mythos-5-1") => (10.0, 0.25, 50.0),
+        _ if m.starts_with("claude-fable-5") || m.starts_with("claude-mythos-5") => (10.0, 1.0, 50.0),
+        _ if m.starts_with("claude-opus-5-5") => (4.0, 0.20, 20.0),
+        _ if m.starts_with("claude-opus-5") || m.starts_with("claude-opus-4-8") || m.starts_with("claude-opus-4-7") || m.starts_with("claude-opus-4-6") => {
+            (5.0, 0.50, 25.0)
+        }
+        _ if m.starts_with("claude-sonnet-5") => (2.0, 0.20, 10.0),
+        _ if m.starts_with("claude-sonnet-4") => (3.0, 0.30, 15.0),
+        _ if m.starts_with("claude-haiku-5-5") => (0.10, 0.01, 0.50),
+        _ if m.starts_with("claude-haiku-4-5") => (1.0, 0.10, 5.0),
+        _ => return None,
+    })
+}
+
+fn cost(model: &str, fresh: u64, cache_read: u64, cache_write: u64, output: u64) -> Option<f64> {
+    let (input, read, out) = price(model)?;
+    let m = 1_000_000.0;
+    Some(fresh as f64 * input / m + cache_read as f64 * read / m + cache_write as f64 * input * 1.25 / m + output as f64 * out / m)
 }
 
 fn extract_error(body: &str) -> String {

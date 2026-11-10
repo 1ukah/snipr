@@ -92,6 +92,8 @@ impl OpenAiSession {
             text: msg["content"].as_str().unwrap_or_default().to_string(),
             input_tokens: v["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
             output_tokens: v["usage"]["completion_tokens"].as_u64().unwrap_or(0),
+            cost_usd: v["usage"]["cost"].as_f64(),
+            model: v["model"].as_str().unwrap_or(&self.cfg.model).to_string(),
             ..Default::default()
         };
         for tc in msg["tool_calls"].as_array().into_iter().flatten() {
