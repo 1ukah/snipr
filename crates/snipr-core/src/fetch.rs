@@ -29,7 +29,7 @@ pub struct Fetched {
 
 pub struct Fetcher {
     plain: reqwest::Client,
-    mimic: wreq::Client,
+    mimic: impit::impit::Impit<impit::cookie::Jar>,
     cookies: Mutex<HashMap<String, (String, std::time::Instant)>>,
 }
 
@@ -44,19 +44,10 @@ impl Fetcher {
             .timeout(Duration::from_secs(25))
             .connect_timeout(Duration::from_secs(10))
             .build()?;
-        let platform = if cfg!(windows) {
-            wreq_util::Platform::Windows
-        } else if cfg!(target_os = "macos") {
-            wreq_util::Platform::MacOS
-        } else {
-            wreq_util::Platform::Linux
-        };
-        let emulation = wreq_util::Emulation::builder().profile(wreq_util::Profile::Chrome149).platform(platform).build();
-        let mimic = wreq::Client::builder()
-            .emulation(emulation)
-            .redirect(wreq::redirect::Policy::limited(10))
-            .timeout(Duration::from_secs(25))
-            .connect_timeout(Duration::from_secs(10))
+        let mimic = impit::impit::Impit::builder()
+            .with_fingerprint(impit::fingerprint::database::chrome_151::fingerprint())
+            .with_redirect(impit::impit::RedirectBehavior::FollowRedirect(10))
+            .with_default_timeout(Duration::from_secs(25))
             .build()?;
         Ok(Self { plain, mimic, cookies: Mutex::new(HashMap::new()) })
     }
@@ -71,13 +62,14 @@ impl Fetcher {
                 Ok(Fetched { status, url, body: r.text().await? })
             }
             Stage::B | Stage::C => {
-                let mut req = self.mimic.get(url).header("accept-language", LANG);
+                let mut headers = vec![("accept-language".to_string(), LANG.to_string())];
                 if let Some(c) = cookie.filter(|c| !c.is_empty()) {
-                    req = req.header("cookie", c);
+                    headers.push(("cookie".to_string(), c.to_string()));
                 }
-                let r = req.send().await?;
+                let opts = impit::request::RequestOptions { headers, ..Default::default() };
+                let r = self.mimic.get(url.to_string(), None, Some(opts)).await?;
                 let status = r.status().as_u16();
-                let url = r.uri().to_string();
+                let url = r.url().to_string();
                 Ok(Fetched { status, url, body: r.text().await? })
             }
             Stage::D => bail!("a etapa D usa o Chrome"),
@@ -159,5 +151,36 @@ mod tests {
         assert!(blocked(&page(200, "<html>resultados R$ 10</html>")).is_none());
         let big = format!("<html>{}captcha</html>", "x".repeat(70_000));
         assert!(blocked(&page(200, &big)).is_none(), "páginas grandes não são desafio");
+    }
+
+    /// Compara as etapas A e B nas lojas padrão (internet, sem Chrome).
+    /// SNIPR_TEST_QUERY muda a busca; SNIPR_TEST_DUMP=<pasta> salva o HTML de cada etapa:
+    ///   SNIPR_TEST_SITES=olx,pichau cargo test -p snipr-core compara_etapas -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn compara_etapas() {
+        let fetcher = Fetcher::new().unwrap();
+        let only = std::env::var("SNIPR_TEST_SITES").unwrap_or_default();
+        for site in crate::sites::default_sites() {
+            if !only.is_empty() && !only.split(',').any(|o| site.id.contains(o)) {
+                continue;
+            }
+            let url = site.build_search_url(&std::env::var("SNIPR_TEST_QUERY").unwrap_or_else(|_| "monitor".into()));
+            for stage in [Stage::A, Stage::B] {
+                let t = std::time::Instant::now();
+                let line = match fetcher.get(stage, &url, None).await {
+                    Ok(f) => {
+                        if let Ok(dir) = std::env::var("SNIPR_TEST_DUMP") {
+                            let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{}-{stage:?}.html", site.id)), &f.body);
+                        }
+                        let cards = crate::parse::cards_from_html(&f.body, &f.url, 80, None).len();
+                        let why = blocked(&f).unwrap_or_else(|| "ok".into());
+                        format!("HTTP {} {:>7} bytes {cards:>3} cards  {why}", f.status, f.body.len())
+                    }
+                    Err(e) => format!("erro: {e:#}"),
+                };
+                println!("{:<22} {stage:?} {:>5.1}s  {line}", site.name, t.elapsed().as_secs_f64());
+            }
+        }
     }
 }

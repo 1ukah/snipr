@@ -25,8 +25,7 @@ parking_lot.workspace = true
 rand.workspace = true
 ts-rs = { version = "10", features = ["serde-compat", "no-serde-warnings"] }
 reqwest.workspace = true
-wreq.workspace = true
-wreq-util.workspace = true
+impit.workspace = true
 scraper.workspace = true
 ego-tree.workspace = true
 regex.workspace = true

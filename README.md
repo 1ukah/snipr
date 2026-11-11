@@ -20,10 +20,8 @@ App nativo em Rust + Tauri (webview do sistema, sem Electron).
 - Um navegador baseado no Chromium: Google Chrome (recomendado), Chromium,
   Microsoft Edge ou Brave. Sem navegador, o Snipr lê só as lojas das etapas A e B.
 - Para usar o login de uma conta de IA: o CLI do provedor instalado (veja abaixo)
-- Ferramentas para compilar o BoringSSL (usado pelo cliente HTTP da etapa B):
-  CMake, Perl e um compilador C. No macOS, `brew install cmake` (o Xcode
-  Command Line Tools traz o resto). No Linux, `build-essential cmake perl clang libclang-dev`.
-  No Windows, CMake, NASM e Perl (ex.: Strawberry Perl), além do Visual Studio Build Tools.
+- Um compilador C, que o Rust já exige: Visual Studio Build Tools no Windows,
+  Xcode Command Line Tools no macOS, `build-essential` no Linux
 - Linux: dependências do Tauri (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`) e `libdbus-1-dev` para o cofre de segredos
 
 ```sh
@@ -86,9 +84,9 @@ termos de busca. O plano aparece na interface e guia a busca.
    | Etapa | Como lê | Exemplos |
    |---|---|---|
    | **A** | HTTP comum | Amazon, KaBuM!, Kalunga, Chipart, lojas Shopify/Nuvemshop/WooCommerce/Magento/Tray |
-   | **B** | HTTP com fingerprint TLS/HTTP2 de Chrome ([wreq](https://github.com/0x676e67/wreq)) | Terabyte, Pichau, OLX |
+   | **B** | HTTP com fingerprint TLS/HTTP2 de Chrome ([impit](https://github.com/apify/impit)) | Terabyte, OLX |
    | **C** | Como B, com os cookies que o Chrome obtém ao passar pela proteção anti-bot | Magazine Luiza |
-   | **D** | Chrome abre a busca e o Snipr lê os cards | Mercado Livre, Enjoei, Facebook, Shopee, Casas Bahia |
+   | **D** | Chrome abre a busca e o Snipr lê os cards | Mercado Livre, Enjoei, Facebook, Shopee, Pichau |
 
    Lojas VTEX usam a API pública de catálogo da plataforma (Americanas, Fast
    Shop, Acer). Páginas que trazem os produtos num JSON embutido (ex.:
