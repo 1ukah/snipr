@@ -468,7 +468,9 @@ fn dom_cards(doc: &Html, ctx: &Ctx, max: usize) -> Vec<Card> {
                 t = clean(&text_of(x));
                 bonus = 60;
             }
-            if t.is_empty() && x.children().filter(|c| c.value().is_element()).count() <= 2 {
+            // Botões de carrossel e favoritos ("Ir para o próximo slide") não são título.
+            let control = el.name() == "button" || x.descendants().any(|d| tag(d) == "button") || x.ancestors().any(|a| tag(a) == "button");
+            if t.is_empty() && !control && x.children().filter(|c| c.value().is_element()).count() <= 2 {
                 t = clean(&text_of(x));
                 bonus = 0;
             }
@@ -742,6 +744,17 @@ fn compact(s: &str) -> String {
     fold(s).chars().filter(|c| c.is_alphanumeric()).collect()
 }
 
+/// O texto compactado cita a palavra. Uma série ("7000") casa com os modelos
+/// dela ("7600", "7800x3d").
+fn hits(hay: &str, key: &str) -> bool {
+    let b = key.as_bytes();
+    let series = b.len() == 4 && (b'1'..=b'9').contains(&b[0]) && &b[1..] == b"000";
+    if !series {
+        return hay.contains(key);
+    }
+    hay.as_bytes().windows(4).any(|w| w[0] == b[0] && w[1..].iter().all(u8::is_ascii_digit))
+}
+
 /// Palavras que distinguem cada alternativa do plano (sem as do tipo de
 /// produto). Sem alternativas, cada termo de busca vira um grupo.
 pub fn plan_groups(product: &str, alternatives: &[String], terms: &[String]) -> Vec<Vec<String>> {
@@ -779,11 +792,11 @@ pub fn shortlist<'a>(cards: &[&'a Card], groups: &[Vec<String>], product: &str, 
     let typed = |h: &String| head.as_ref().is_none_or(|k| h.contains(k.as_str()));
     let common = all.iter().filter(|h| typed(h)).count() * 100 >= all.len() * 15;
     // Duas palavras do modelo bastam (sinônimos do tipo: "Smartphone" para "celular").
-    let named = |h: &String| groups.iter().any(|g| g.iter().filter(|k| h.contains(k.as_str())).count() >= 2);
+    let named = |h: &String| groups.iter().any(|g| g.iter().filter(|k| hits(h, k)).count() >= 2);
     let (cards, hay): (Vec<&'a Card>, Vec<String>) = cards.iter().copied().zip(all).filter(|(_, h)| !common || typed(h) || named(h)).unzip();
     let n = cards.len() as f64;
     let weight = |k: &str| {
-        let df = hay.iter().filter(|h| h.contains(k)).count().max(1) as f64;
+        let df = hay.iter().filter(|h| hits(h, k)).count().max(1) as f64;
         (1.0 + n / df).ln()
     };
     let mut ranked: Vec<Vec<usize>> = Vec::new();
@@ -793,7 +806,7 @@ pub fn shortlist<'a>(cards: &[&'a Card], groups: &[Vec<String>], product: &str, 
         let mut scored: Vec<(usize, f64)> = hay
             .iter()
             .enumerate()
-            .map(|(i, h)| (i, g.iter().zip(&w).filter(|(k, _)| h.contains(k.as_str())).map(|(_, w)| w).sum::<f64>() / total))
+            .map(|(i, h)| (i, g.iter().zip(&w).filter(|(k, _)| hits(h, k)).map(|(_, w)| w).sum::<f64>() / total))
             .filter(|(_, s)| *s > 0.0)
             .collect();
         scored.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -826,12 +839,36 @@ pub fn shortlist<'a>(cards: &[&'a Card], groups: &[Vec<String>], product: &str, 
     out
 }
 
+/// Cards de título genérico ("PC Gamer Completo") que a lista curta deixou de
+/// fora: citam o tipo de produto ou um termo amplo do plano, mas não o modelo.
+/// As especificações deles costumam estar só na descrição.
+pub fn generic<'a>(cards: &[&'a Card], chosen: &[&Card], product: &str, broad: &[String], max: usize) -> Vec<&'a Card> {
+    let words = |s: &str| -> Vec<String> { fold(s).split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() >= 2).map(String::from).collect() };
+    let mut kinds: Vec<Vec<String>> = broad.iter().map(|b| words(b)).filter(|w| !w.is_empty()).collect();
+    if let Some(head) = keys(product).into_iter().next() {
+        kinds.push(vec![head.trim_end_matches('s').to_string()]);
+    }
+    cards
+        .iter()
+        .copied()
+        .filter(|c| !chosen.iter().any(|x| std::ptr::eq(*x, *c)))
+        .filter(|c| {
+            let h = compact(&c.title);
+            kinds.iter().any(|k| k.iter().all(|w| h.contains(w.as_str())))
+        })
+        .take(max)
+        .collect()
+}
+
 /// Busca mais curta para quando nenhum card do termo cita o modelo dele. Fica
 /// só com as palavras raras nos resultados: em lojas que buscam qualquer
 /// palavra, o resto casa com o catálogo todo ("cadeira XT Office X-Pro" na
 /// loja da XT → "X-Pro").
 pub fn narrower_term(term: &str, product: &str, cards: &[Card]) -> Option<String> {
     let group = plan_groups(product, &[], &[term.to_string()]).pop()?;
+    if cards.is_empty() {
+        return emptier_term(term, &group);
+    }
     let refs: Vec<&Card> = cards.iter().collect();
     if !shortlist(&refs, std::slice::from_ref(&group), product, true, &[], 1).is_empty() {
         return None;
@@ -846,6 +883,22 @@ pub fn narrower_term(term: &str, product: &str, cards: &[Card]) -> Option<String
         })
         .collect();
     let q = kept.join(" ");
+    (!q.is_empty() && !q.eq_ignore_ascii_case(term.trim())).then_some(q)
+}
+
+/// Busca sem nenhum resultado: lojas que exigem todas as palavras (ex.: OLX)
+/// não acham "AM5 Ryzen 7000 32GB DDR5". Fica a primeira metade das palavras
+/// do modelo (no mínimo duas), sem séries ("7000"), que os títulos não usam.
+fn emptier_term(term: &str, group: &[String]) -> Option<String> {
+    let series = |k: &str| k.len() == 4 && k.ends_with("000") && k.starts_with(|c: char| c.is_ascii_digit());
+    let words: Vec<&str> = term
+        .split_whitespace()
+        .filter(|w| {
+            let k = compact(w);
+            group.contains(&k) && !series(&k)
+        })
+        .collect();
+    let q = words[..words.len().min(2.max(words.len().div_ceil(2)))].join(" ");
     (!q.is_empty() && !q.eq_ignore_ascii_case(term.trim())).then_some(q)
 }
 
@@ -937,6 +990,12 @@ mod tests {
         assert_eq!(narrower_term("cadeira XT Office X-Pro", "cadeira", &found), None, "o modelo já apareceu");
         assert_eq!(narrower_term("cadeira DT3 Forst", "cadeira", &[]).as_deref(), Some("DT3 Forst"), "sem cards: tira só o tipo");
         assert_eq!(narrower_term("Forst", "cadeira", &[]), None, "nada mais curto");
+        assert_eq!(
+            narrower_term("computador AM5 Ryzen 7000 32GB DDR5", "computador", &[]).as_deref(),
+            Some("AM5 Ryzen"),
+            "sem cards: metade do modelo, sem a série"
+        );
+        assert_eq!(narrower_term("AM5 Ryzen", "computador", &[]), None);
     }
 
     #[test]
@@ -945,6 +1004,17 @@ mod tests {
             <a href="/produto/123456/cadeira-royce"><span>Cadeira Gamer DT3 Royce</span></a><span>R$ 2.474,90</span></div></body>"#;
         let cards = cards_from_html(html, "https://loja.com.br/busca?q=royce", 10, None);
         assert_eq!(cards[0].title, "Cadeira Gamer DT3 Royce");
+    }
+
+    #[test]
+    fn carrossel_de_fotos_nao_vira_titulo() {
+        let html = r#"<body><section><div><a href="https://sp.olx.com.br/informatica/pc-gamer-am5-1234567890"><h2>PC Gamer AM5 Ryzen 7 7700</h2></a>
+            <h3>R$ 7.100</h3><p>São Paulo, Hoje</p></div>
+            <div class="media"><div><button><span>Ir para o slide anterior</span></button><button><span>Ir para o próximo slide</span></button>
+            <img src="x.webp"><ul><li><span>Slide 1</span></li><li><span>Slide 2</span></li><li><span>Slide 3</span></li></ul>
+            <button><span>Adicionar aos favoritos</span></button></div></div></section></body>"#;
+        let cards = cards_from_html(html, "https://www.olx.com.br/brasil?q=pc+gamer+am5", 10, None);
+        assert_eq!(cards[0].title, "PC Gamer AM5 Ryzen 7 7700");
     }
 
     #[test]
@@ -1077,6 +1147,34 @@ mod tests {
         let titles: Vec<&str> = short.iter().map(|c| c.title.as_str()).collect();
         assert_eq!(titles[0], "Smartphone Samsung Galaxy S24 128GB");
         assert!(!titles.contains(&"Película S24"), "{titles:?}");
+    }
+
+    #[test]
+    fn serie_casa_com_os_modelos_e_genericos_vao_ao_filtro() {
+        let card = |t: &str| Card { title: t.into(), ..Default::default() };
+        let cards = [
+            card("PC Gamer Ryzen 5 7600 32GB DDR5 RTX 4060"),
+            card("Computador Ryzen 7 9800X3D 32GB"),
+            card("PC Gamer Ryzen 5 5600 16GB DDR4"),
+            card("PC Gamer Completo Top"),
+            card("Computador Gamer Barato Monitor Incluso"),
+            card("Mouse Gamer RGB"),
+        ];
+        let refs: Vec<&Card> = cards.iter().collect();
+        let alts = ["Ryzen 7000", "Ryzen 9000"].map(String::from);
+        let short = shortlist(&refs, &plan_groups("computador", &alts, &[]), "computador", true, &[], 40);
+        let titles: Vec<&str> = short.iter().map(|c| c.title.as_str()).collect();
+        assert!(titles.contains(&"PC Gamer Ryzen 5 7600 32GB DDR5 RTX 4060"), "{titles:?}");
+        assert!(titles.contains(&"Computador Ryzen 7 9800X3D 32GB"), "{titles:?}");
+        assert!(!titles.contains(&"PC Gamer Ryzen 5 5600 16GB DDR4"), "outra série: {titles:?}");
+
+        let broad = ["pc gamer".to_string(), "computador gamer".to_string()];
+        let more = generic(&refs, &short, "computador", &broad, 10);
+        let more: Vec<&str> = more.iter().map(|c| c.title.as_str()).collect();
+        assert!(more.contains(&"PC Gamer Completo Top"), "{more:?}");
+        assert!(more.contains(&"Computador Gamer Barato Monitor Incluso"), "{more:?}");
+        assert!(!more.contains(&"Mouse Gamer RGB"), "{more:?}");
+        assert!(!more.iter().any(|t| titles.contains(t)), "não repete a lista curta");
     }
 
     #[test]

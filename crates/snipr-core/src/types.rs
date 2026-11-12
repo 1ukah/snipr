@@ -44,10 +44,16 @@ pub struct SearchPlan {
     pub product: String,
     pub alternatives: Vec<String>,
     pub requirements: Vec<String>,
+    /// O que o usuário prefere, sem exigir ("de preferência X3D").
+    pub preferences: Vec<String>,
     pub exclude: Vec<String>,
     pub condition: Option<ConditionFilter>,
     pub max_price: Option<f64>,
     pub search_terms: Vec<String>,
+    /// Termos genéricos ("pc gamer") de anúncios que só citam as
+    /// especificações na descrição. Com eles, a busca é profunda: anúncios
+    /// genéricos têm a página lida.
+    pub broad_terms: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

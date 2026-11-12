@@ -39,6 +39,13 @@ const RETRY_LIGHTER_AFTER: u64 = 7 * 24 * 3600;
 const MAX_CANDIDATES: usize = 40;
 /// Anúncios abertos para conferir detalhes, por lote.
 const MAX_CHECKS: usize = 6;
+/// O mesmo, na busca profunda (plano com termos amplos): anúncios genéricos
+/// só mostram as especificações na descrição.
+const MAX_CHECKS_DEEP: usize = 24;
+/// Cards de título genérico por loja que vão para o filtro na busca profunda.
+const MAX_GENERIC: usize = 25;
+/// Páginas de anúncio por chamada à IA na conferência de detalhes.
+const PAGES_PER_CALL: usize = 6;
 
 pub(crate) struct Ctx {
     job: String,
@@ -410,6 +417,7 @@ impl Engine {
         ));
         let groups = parse::plan_groups(&ctx.plan.product, &ctx.plan.alternatives, &ctx.plan.search_terms);
         let strict = !ctx.plan.alternatives.is_empty();
+        let deep = !ctx.plan.broad_terms.is_empty();
         let max = ctx.req.max_price;
         let mut cand: Vec<(usize, Card)> = Vec::new();
         let mut rows = Vec::new();
@@ -425,11 +433,17 @@ impl Engine {
                         && min.is_some_and(|min| min >= 5.0 && !max.is_some_and(|m| min > m))
                 })
                 .collect();
-            for card in parse::shortlist(&usable, &groups, &ctx.plan.product, strict, &words, MAX_CANDIDATES) {
+            let mut short = parse::shortlist(&usable, &groups, &ctx.plan.product, strict, &words, MAX_CANDIDATES);
+            if deep {
+                let extra = parse::generic(&usable, &short, &ctx.plan.product, &ctx.plan.broad_terms, MAX_GENERIC);
+                short.extend(extra);
+            }
+            for card in short {
                 rows.push(prompts::judge_row(cand.len() + 1, &b.site.name, card));
                 cand.push((bi, card.clone()));
             }
         }
+        let max_checks = if deep { MAX_CHECKS_DEEP } else { MAX_CHECKS };
         if cand.is_empty() {
             for b in batches {
                 let _ = b.done.send(Ok(0));
@@ -438,7 +452,7 @@ impl Engine {
         }
         let names: Vec<&Site> = batches.iter().map(|b| &b.site).collect();
         let prompt = format!(
-            "{}\n{}\nAnúncios:\n{}",
+            "{}\n{}\nLimite de check: {max_checks} anúncios.\n\nAnúncios:\n{}",
             prompts::plan_text(&ctx.req, &ctx.plan),
             prompts::stores_legend(&names),
             rows.join("\n")
@@ -461,10 +475,10 @@ impl Engine {
         for (id, cond, pidx) in &verdict.keep {
             self.keep(ctx, &batches, &cand, *id, *cond, *pidx, &mut counts);
         }
-        let checks: Vec<usize> = verdict.check.iter().copied().filter(|id| (1..=cand.len()).contains(id)).take(MAX_CHECKS).collect();
+        let checks: Vec<usize> = verdict.check.iter().copied().filter(|id| (1..=cand.len()).contains(id)).take(max_checks).collect();
         if !checks.is_empty() {
             for b in &batches {
-                ctx.sink.log(&b.agent, "conferindo detalhes de anúncios");
+                ctx.sink.log(&b.agent, format!("lendo a descrição de {} anúncio(s)", checks.len()));
             }
             match self.check_details(ctx, &batches, &cand, &checks).await {
                 Ok(v) => {
@@ -534,12 +548,28 @@ impl Engine {
         if texts.is_empty() {
             bail!("nenhuma página de anúncio pôde ser lida");
         }
-        let prompt = format!("{}\nAnúncios:\n{}", prompts::plan_text(&ctx.req, &ctx.plan), texts.join("\n"));
-        self.verdict(ctx, prompts::DETAILS, prompt, "details").await
+        // Poucas páginas por chamada: o prompt fica curto e as chamadas correm juntas.
+        let plan = prompts::plan_text(&ctx.req, &ctx.plan);
+        let calls = texts.chunks(PAGES_PER_CALL).map(|chunk| {
+            let prompt = format!("{plan}\nAnúncios:\n{}", chunk.join("\n"));
+            self.verdict(ctx, prompts::DETAILS, prompt, "details")
+        });
+        let mut out = prompts::Verdict::default();
+        let mut last = None;
+        for r in futures_util::future::join_all(calls).await {
+            match r {
+                Ok(v) => out.keep.extend(v.keep),
+                Err(e) => last = Some(e),
+            }
+        }
+        match last {
+            Some(e) if out.keep.is_empty() => Err(e),
+            _ => Ok(out),
+        }
     }
 
     async fn page_text(self: &Arc<Self>, ctx: &Arc<Ctx>, site: &Site, agent: &str, url: &str) -> Result<String> {
-        const MAX: usize = 2500;
+        const MAX: usize = 4000;
         match site.stage.unwrap_or(Stage::D) {
             stage @ (Stage::A | Stage::B | Stage::C) => {
                 let cookie = if stage == Stage::C { self.fetcher.cookie(&site.id) } else { None };
@@ -596,7 +626,8 @@ fn needs_agent(site: &Site) -> bool {
 }
 
 fn terms(ctx: &Ctx, site: &Site) -> Vec<String> {
-    let t: Vec<String> = ctx.plan.search_terms.iter().filter(|t| !t.trim().is_empty()).take(4).cloned().collect();
+    // Os termos amplos ("pc gamer") trazem anúncios que só citam o modelo na descrição.
+    let t: Vec<String> = ctx.plan.search_terms.iter().take(4).chain(ctx.plan.broad_terms.iter().take(2)).filter(|t| !t.trim().is_empty()).cloned().collect();
     let t = if t.is_empty() { vec![ctx.req.query.trim().to_string()] } else { t };
     let mut out: Vec<String> = Vec::new();
     for term in t.iter().map(|x| without_store_name(x, site)) {
@@ -626,7 +657,8 @@ impl Queue {
     }
 
     fn after(&mut self, term: &str, retry: bool, product: &str, cards: &[Card]) {
-        if retry || self.retries == 0 {
+        // Uma busca curta sem nenhum resultado pode encurtar de novo.
+        if (retry && !cards.is_empty()) || self.retries == 0 {
             return;
         }
         if let Some(q) = parse::narrower_term(term, product, cards).filter(|q| !self.seen.iter().any(|s| s.eq_ignore_ascii_case(q))) {
