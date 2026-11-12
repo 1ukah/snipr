@@ -7,6 +7,7 @@ import { $, $$, check, el, errText, fold, icon, toast } from './dom';
 import { addUsage, countSearch, renderFooter } from './footer';
 import { closePop } from './popover';
 import { type Cond, saveSettings, siteById, state } from './state';
+import { columns, listingRow } from './rows';
 import { storePicker } from './storepick';
 import { t } from './strings';
 
@@ -207,57 +208,18 @@ function renderMore() {
   );
 }
 
-const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-function price(v: number, original?: number) {
-  const c = Math.round((v % 1) * 100);
-  const was =
-    original && original > v
-      ? el(
-          'span',
-          { class: 'was', role: 'tooltip' },
-          el('s', { text: brl(original) }),
-          el('span', { class: 'off', text: `-${Math.round((1 - v / original) * 100)}%` }),
-        )
-      : null;
-  return el(
-    'span',
-    { class: 'price' + (was ? ' has-was' : ''), 'aria-label': was ? `${brl(v)}. ${t.wasPrice}: ${brl(original!)}` : brl(v) },
-    el('span', { class: 'cur', text: 'R$' }),
-    el('span', { class: 'int', text: Math.floor(v).toLocaleString('pt-BR') }),
-    el('span', { class: 'ct', text: ',' + String(c).padStart(2, '0') }),
-    was,
-  );
-}
-
-function openListing(url: string) {
-  if (!/^https?:\/\//i.test(url)) return;
-  api.openUrl(url).catch((e) => toast(errText(e)));
-}
-
 function renderList() {
   const all = visible();
   const bn = all.find((l) => l.condition === 'new');
   const bu = all.find((l) => l.condition === 'used');
   $('#list').replaceChildren(
     ...all.map((l) => {
-      const li = el(
-        'li',
-        { class: 'row' + (l === bn || l === bu ? ' best' : '') + (l.fresh ? ' fresh' : '') },
-        el('span', { class: 'dot ' + (l.condition === 'used' ? 'u' : 'f'), title: l.condition === 'used' ? t.used : t.new }),
-        price(l.price, l.original_price),
-        el(
-          'div',
-          { class: 't' },
-          el('div', { class: 'ti' }, el('span', { class: 'tt', text: l.title, title: l.title }), l.international ? el('span', { class: 'intl', text: t.intlBadge, title: t.intlTip }) : null),
-          el('div', { class: 'sub', text: l.site_name }),
-        ),
-        el('button', { class: 'dest', title: t.openListing(l.site_name), onclick: () => openListing(l.url) }, icon('i-out'), el('span', { text: l.site_name })),
-      );
+      const li = listingRow(l, { best: l === bn || l === bu, fresh: l.fresh });
       l.fresh = false;
       return li;
     }),
   );
+  $('#cols').replaceChildren(...(all.length ? [columns()] : []));
   const n = all.length;
   $('#count').textContent = t.results(n) + (state.elapsed ? ` · ${state.elapsed}` : '');
   $('#rh').hidden = !searched() && !isRunning();
@@ -446,6 +408,14 @@ function onEvent(ev: SearchEvent) {
       state.keys.add(key);
       state.listings.push({ ...l, fresh: true });
       render();
+      break;
+    }
+    case 'updated': {
+      const i = state.listings.findIndex((x) => x.id === ev.listing.id);
+      if (i >= 0) {
+        state.listings[i] = ev.listing;
+        render();
+      }
       break;
     }
     case 'needs_human': {

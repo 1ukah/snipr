@@ -5,7 +5,10 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use snipr_core::{secrets, BrowserStatus, CliStatus, Engine, Provider, SearchEvent, SearchRequest, Settings, Site, Suggestion, Theme};
+use snipr_core::{
+    secrets, BrowserStatus, CliStatus, Engine, Provider, Schedule, ScheduleEvent, ScheduleResults, SearchEvent, SearchRequest, Settings, Site, Suggestion,
+    Theme,
+};
 use tauri::{window::Color, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 struct AppState {
@@ -134,6 +137,53 @@ fn resolve_human(state: State<'_, AppState>, agent: String, ok: bool) -> bool {
 }
 
 #[tauri::command]
+fn visited(state: State<'_, AppState>) -> Vec<String> {
+    state.engine.visited()
+}
+
+#[tauri::command]
+fn mark_visited(state: State<'_, AppState>, url: String) -> Res<()> {
+    state.engine.mark_visited(&url).map_err(err)
+}
+
+#[tauri::command]
+fn open_data_dir(app: tauri::AppHandle, state: State<'_, AppState>) -> Res<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = state.engine.data_dir();
+    app.opener().open_path(dir.display().to_string(), None::<&str>).map_err(err)
+}
+
+#[tauri::command]
+fn list_schedules(state: State<'_, AppState>) -> Vec<Schedule> {
+    state.engine.schedules()
+}
+
+#[tauri::command]
+fn save_schedule(state: State<'_, AppState>, schedule: Schedule) -> Res<Schedule> {
+    state.engine.save_schedule(schedule).map_err(err)
+}
+
+#[tauri::command]
+fn delete_schedule(state: State<'_, AppState>, id: String) -> Res<()> {
+    state.engine.delete_schedule(&id).map_err(err)
+}
+
+#[tauri::command]
+fn run_schedule(state: State<'_, AppState>, id: String) -> Res<()> {
+    state.engine.run_schedule(&id).map_err(err)
+}
+
+#[tauri::command]
+fn stop_schedule(state: State<'_, AppState>, id: String) {
+    state.engine.stop_schedule(&id);
+}
+
+#[tauri::command]
+fn schedule_results(state: State<'_, AppState>, id: String) -> ScheduleResults {
+    state.engine.schedule_results(&id)
+}
+
+#[tauri::command]
 async fn open_login(state: State<'_, AppState>, site: String) -> Res<()> {
     state.engine.open_login(&site).await.map_err(err)
 }
@@ -220,6 +270,15 @@ fn main() {
                 Theme::Light => Color(244, 244, 243, 255),
                 _ => Color(13, 13, 14, 255),
             };
+            // Buscas automáticas: os avisos vão para a interface num canal separado das buscas manuais.
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ScheduleEvent>();
+            engine.start_scheduler(tx);
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                while let Some(ev) = rx.recv().await {
+                    let _ = handle.emit("snipr-auto", &ev);
+                }
+            });
             app.manage(AppState { engine });
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Snipr")
@@ -253,6 +312,15 @@ fn main() {
             resolve_human,
             open_login,
             close_login,
+            visited,
+            mark_visited,
+            open_data_dir,
+            list_schedules,
+            save_schedule,
+            delete_schedule,
+            run_schedule,
+            stop_schedule,
+            schedule_results,
         ])
         .build(tauri::generate_context!())
         .expect("erro ao iniciar o Snipr")

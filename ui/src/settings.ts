@@ -307,6 +307,10 @@ export function renderSettings() {
     renderFooter();
   });
 
+  toggle('#t-offers', s.offer_details, (v) => saveSettings({ offer_details: v }));
+  toggle('#t-hist-manual', s.history_manual, (v) => saveSettings({ history_manual: v }));
+  toggle('#t-hist-auto', s.history_auto, (v) => saveSettings({ history_auto: v }));
+
   numberInput('#max-parallel', s.max_parallel, (n) => saveSettings({ max_parallel: Math.min(8, Math.max(1, n)) }));
   numberInput('#max-steps', s.max_steps, (n) => saveSettings({ max_steps: Math.min(60, Math.max(5, n)) }));
   renderBrowser();
@@ -348,6 +352,7 @@ export function renderSettings() {
 
 export function initSettings() {
   $('#browser-test').addEventListener('click', testBrowser);
+  $('#open-data').addEventListener('click', () => api.openDataDir().catch((e) => toast(errText(e))));
   window.addEventListener('focus', () => {
     if (!$('#settings').hidden && ai().mode === 'login') refreshStatuses();
   });

@@ -78,6 +78,7 @@ async function boot() {
     state.cond = new Set(state.settings.conditions.filter((c): c is 'new' | 'used' => c === 'new' || c === 'used'));
     if (!state.cond.size) state.cond.add('new');
     state.showIntl = state.settings.show_international;
+    state.visited = new Set(await api.visited().catch(() => []));
     render();
     $('#q').focus();
     api

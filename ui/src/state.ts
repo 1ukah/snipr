@@ -55,7 +55,13 @@ export const state = {
   elapsed: null as string | null,
   progress: false,
   showIntl: false,
+  /** Opened listing links (linkKey). */
+  visited: new Set<string>(),
+  tab: 'search' as 'search' | 'auto',
 };
+
+/** Same rule as `history::link_key` in the core. */
+export const linkKey = (url: string) => url.split(/[?#]/)[0].replace(/\/+$/, '').toLowerCase();
 
 export const siteById = (id: string) => state.sites.find((s) => s.id === id);
 

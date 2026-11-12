@@ -4,6 +4,9 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import type { BrowserStatus } from './bindings/BrowserStatus';
 import type { CliStatus } from './bindings/CliStatus';
 import type { Provider } from './bindings/Provider';
+import type { Schedule } from './bindings/Schedule';
+import type { ScheduleEvent } from './bindings/ScheduleEvent';
+import type { ScheduleResults } from './bindings/ScheduleResults';
 import type { SearchEvent } from './bindings/SearchEvent';
 import type { SearchRequest } from './bindings/SearchRequest';
 import type { Settings } from './bindings/Settings';
@@ -33,6 +36,16 @@ export const api = {
   resolveHuman: (agent: string, ok: boolean) => invoke<boolean>('resolve_human', { agent, ok }),
   openLogin: (site: string) => invoke<void>('open_login', { site }),
   closeLogin: (done: boolean) => invoke<void>('close_login', { done }),
+  visited: () => invoke<string[]>('visited'),
+  markVisited: (url: string) => invoke<void>('mark_visited', { url }),
+  openDataDir: () => invoke<void>('open_data_dir'),
+  schedules: () => invoke<Schedule[]>('list_schedules'),
+  saveSchedule: (schedule: Schedule) => invoke<Schedule>('save_schedule', { schedule }),
+  deleteSchedule: (id: string) => invoke<void>('delete_schedule', { id }),
+  runSchedule: (id: string) => invoke<void>('run_schedule', { id }),
+  stopSchedule: (id: string) => invoke<void>('stop_schedule', { id }),
+  scheduleResults: (id: string) => invoke<ScheduleResults>('schedule_results', { id }),
   onEvent: (cb: (ev: SearchEvent) => void) => listen<SearchEvent>('snipr-event', (e) => cb(e.payload)),
+  onAuto: (cb: (ev: ScheduleEvent) => void) => listen<ScheduleEvent>('snipr-auto', (e) => cb(e.payload)),
   openUrl: (url: string) => openUrl(url),
 };
