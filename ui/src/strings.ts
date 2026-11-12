@@ -11,6 +11,7 @@ export const t = {
   tabSearch: 'Busca',
   tabAuto: 'Automáticas',
   newAuto: 'Nova busca automática',
+  moreStores: (n: number) => `+${n} ${n === 1 ? 'loja' : 'lojas'}`,
   autoHelp: 'Uma busca automática repete a mesma busca nas lojas escolhidas, a cada X minutos ou todo dia num horário. O Snipr precisa estar aberto. Depois da primeira execução, só os anúncios novos passam pela IA.',
   everyLabel: 'A cada',
   dailyLabel: 'Todo dia às',

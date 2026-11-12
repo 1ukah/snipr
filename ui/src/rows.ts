@@ -99,7 +99,7 @@ export function listingRow(l: Listing, f: RowFlags = {}) {
         f.recent ? el('span', { class: 'intl', text: t.recentBadge, title: t.recentTip }) : null,
         l.international ? el('span', { class: 'intl', text: t.intlBadge, title: t.intlTip }) : null,
       ),
-      el('div', { class: 'sub', text: [l.site_name, ...l.offers].join(' · ') }),
+      el('div', { class: 'sub' }, el('span', { class: 'site', text: l.site_name }), ...l.offers.map((o) => el('span', { class: 'of', text: o }))),
     ),
     el('div', { class: 'info' }, ...l.offers.map((o) => el('span', { class: 'chip', text: o, title: o }))),
     el('span', { class: 'dest' }, icon('i-out'), el('span', { text: l.site_name })),

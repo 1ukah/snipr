@@ -126,6 +126,9 @@ pub enum ScheduleEvent {
     Removed { id: String },
     /// Uso da IA de uma execução (para os totais da interface).
     Usage { usage: Usage },
+    /// Andamento de uma execução: lojas (`started`), mensagens (`log`) e fim
+    /// de cada loja (`agent_finished`).
+    Progress { id: String, event: Box<SearchEvent> },
 }
 
 /// Estado das buscas automáticas dentro do `Engine`.
@@ -413,12 +416,16 @@ impl Engine {
         while let Some(ev) = rx.recv().await {
             match ev {
                 SearchEvent::Usage { usage, .. } => self.auto.emit(ScheduleEvent::Usage { usage }),
-                SearchEvent::AgentFinished { ok, summary, .. } => {
+                SearchEvent::AgentFinished { ok, ref summary, .. } => {
                     total += 1;
                     if !ok {
                         failed += 1;
-                        first_error.get_or_insert(summary);
+                        first_error.get_or_insert(summary.clone());
                     }
+                    self.auto.emit(ScheduleEvent::Progress { id: id.to_string(), event: Box::new(ev) });
+                }
+                SearchEvent::Started { .. } | SearchEvent::Log { .. } => {
+                    self.auto.emit(ScheduleEvent::Progress { id: id.to_string(), event: Box::new(ev) })
                 }
                 SearchEvent::Finished { .. } => break,
                 _ => {}

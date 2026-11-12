@@ -7,7 +7,8 @@ import { $, check, el, errText, icon, toast } from './dom';
 import { addTotalUsage } from './footer';
 import { segment } from './popover';
 import { columns, listingRow } from './rows';
-import { type Cond, condFilter, condsOf, state } from './state';
+import { paintAgents, trackAgents } from './progress';
+import { type AgentView, type Cond, condFilter, condsOf, siteById, state } from './state';
 import { storePicker } from './storepick';
 import { t } from './strings';
 
@@ -16,6 +17,21 @@ let list: Schedule[] = [];
 let selected: string | null = null;
 let draft: Schedule = blank();
 let results: ScheduleResults | null = null;
+/** Store progress of the last run of each schedule. */
+const progress = new Map<string, Map<string, AgentView>>();
+
+function renderProgress() {
+  const agents = selected ? progress.get(selected) : undefined;
+  paintAgents($('#a-agents'), agents ? [...agents.values()] : [], state.progress);
+  $('#a-progress')?.setAttribute('aria-checked', String(state.progress));
+}
+
+/** "OLX, KaBuM! +3 lojas" */
+function storesLine(ids: string[]) {
+  const names = ids.map((id) => siteById(id)?.name).filter((n): n is string => !!n);
+  if (names.length <= 2) return names.join(', ');
+  return `${names.slice(0, 2).join(', ')} ${t.moreStores(names.length - 2)}`;
+}
 
 function blank(): Schedule {
   return {
@@ -69,6 +85,7 @@ function renderSide() {
         { type: 'button', class: 'a-item' + (s.id === selected ? ' on' : '') + (s.enabled ? '' : ' off'), onclick: () => pick(s.id) },
         el('span', { class: 'nm', text: s.query, title: s.query }),
         s.running ? el('span', { class: 'live', title: t.autoRunning }) : null,
+        el('span', { class: 'st', text: storesLine(s.sites), title: s.sites.map((id) => siteById(id)?.name ?? id).join(', ') }),
         el('span', { class: 'sub', text: [everyText(s.every), s.last_run ? t.resultsShort(s.last_total, s.last_new) : null].filter(Boolean).join(' · ') }),
       ),
     ),
@@ -197,9 +214,33 @@ function renderEditor() {
         ? el('button', { type: 'button', class: 'btn', onclick: () => api.stopSchedule(selected!) }, icon('i-stop'), t.stop)
         : el('button', { type: 'button', class: 'btn', onclick: () => save(true) }, icon('i-search'), t.runNow),
       selected ? el('button', { type: 'button', class: 'btn', onclick: remove }, icon('i-trash'), t.remove) : null,
+    ),
+    el(
+      'div',
+      { class: 'a-meta' },
       el('span', { class: 'a-status' + (saved?.last_error ? ' err' : ''), text: status(saved) }),
+      selected
+        ? el(
+            'button',
+            {
+              type: 'button',
+              class: 'tg a-prog',
+              id: 'a-progress',
+              role: 'switch',
+              'aria-checked': String(state.progress),
+              onclick: () => {
+                state.progress = !state.progress;
+                renderProgress();
+              },
+            },
+            el('span', { class: 'sw' }),
+            icon('i-pulse'),
+            t.progress,
+          )
+        : null,
     ),
   );
+  renderProgress();
   if (selected === null) setTimeout(() => q.focus(), 0);
 }
 
@@ -281,6 +322,13 @@ async function remove() {
 
 function onAuto(ev: ScheduleEvent) {
   if (ev.type === 'usage') return addTotalUsage(ev.usage);
+  if (ev.type === 'progress') {
+    let agents = progress.get(ev.id);
+    if (!agents) progress.set(ev.id, (agents = new Map()));
+    trackAgents(agents, ev.event);
+    if (state.tab === 'auto' && selected === ev.id) renderProgress();
+    return;
+  }
   if (ev.type === 'removed') {
     list = list.filter((s) => s.id !== ev.id);
     if (selected === ev.id) pick(null);

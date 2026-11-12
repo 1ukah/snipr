@@ -6,6 +6,7 @@ import { $, $$, check, el, errText, fold, icon, toast } from './dom';
 import { addUsage, countSearch, renderFooter } from './footer';
 import { closePop } from './popover';
 import { type Cond, condFilter, condsOf, saveSettings, siteById, state } from './state';
+import { paintAgents } from './progress';
 import { columns, listingRow } from './rows';
 import { storePicker } from './storepick';
 import { t } from './strings';
@@ -221,25 +222,8 @@ function renderList() {
 }
 
 function renderAgents() {
-  const box = $('#agents');
-  const list = [...state.agents.values()];
   $('#t-progress').setAttribute('aria-checked', String(state.progress));
-  box.hidden = !state.progress || !list.length;
-  if (box.hidden) return;
-  const done = list.filter((a) => a.st === 'ok' || a.st === 'fail').length;
-  box.replaceChildren(
-    el('div', { class: 'fl' }, icon('i-pulse'), el('span', { text: t.progress }), el('span', { class: 'n', text: `${done}/${list.length}` })),
-    ...list.map((a) =>
-      el(
-        'div',
-        { class: 'agent ' + a.st },
-        el('span', { class: 'nm', text: a.label }),
-        el('span', { class: 'trk' }, el('i', { style: `width:${a.pct}%` })),
-        el('span', { class: 'm', text: a.msg, title: a.msg }),
-        el('span', { class: 'st' }, a.st === 'ok' ? icon('i-check') : a.st === 'fail' ? icon('i-x') : null),
-      ),
-    ),
-  );
+  paintAgents($('#agents'), [...state.agents.values()], state.progress);
 }
 
 function renderHuman() {
