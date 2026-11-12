@@ -62,6 +62,13 @@ export function addUsage(u: Usage) {
   renderFooter();
 }
 
+/** Usage outside the current search (automatic searches): totals only. */
+export function addTotalUsage(u: Usage) {
+  add(totals, u);
+  persist();
+  renderFooter();
+}
+
 function resetTotals() {
   totals = { ...blank(), searches: 0 };
   persist();

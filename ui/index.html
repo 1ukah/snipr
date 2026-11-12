@@ -53,6 +53,10 @@
     <div class="brand">
       <button class="tb only-narrow" id="o-filters"><svg class="i"><use href="#i-filter"/></svg><span data-t="filters"></span></button>
       <svg viewBox="0 0 64 64" aria-label="Snipr"><use href="#mark"/></svg>
+      <nav class="tabs" id="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="search" aria-selected="true"><svg class="i"><use href="#i-search"/></svg><span class="lbl" data-t="tabSearch"></span></button>
+        <button type="button" role="tab" data-tab="auto" aria-selected="false"><svg class="i"><use href="#i-clock"/></svg><span class="lbl" data-t="tabAuto"></span><span class="live" id="tab-auto-live" hidden></span></button>
+      </nav>
     </div>
     <form class="bar" id="form" autocomplete="off">
       <input id="q" spellcheck="false" data-t-placeholder="searchPlaceholder" data-t-aria="search">
@@ -65,7 +69,19 @@
     </div>
   </div></header>
 
-  <div class="mid">
+  <div class="mid" id="auto-view" hidden>
+  <div class="scroller"><div class="wrap body">
+    <aside class="a-side" id="a-side"></aside>
+    <main class="main">
+      <section class="a-edit" id="a-edit"></section>
+      <div class="rh" id="a-rh" hidden></div>
+      <div id="a-cols"></div>
+      <ol class="list" id="a-list"></ol>
+    </main>
+  </div></div>
+  </div>
+
+  <div class="mid" id="search-view">
   <div class="scroller"><div class="wrap body">
     <aside class="side" id="side">
       <div class="fs">

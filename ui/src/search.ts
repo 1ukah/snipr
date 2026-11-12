@@ -1,21 +1,15 @@
 import { api } from './api';
-import type { ConditionFilter } from './bindings/ConditionFilter';
 import type { SearchEvent } from './bindings/SearchEvent';
 import type { SearchPlan } from './bindings/SearchPlan';
 import type { SearchRequest } from './bindings/SearchRequest';
 import { $, $$, check, el, errText, fold, icon, toast } from './dom';
 import { addUsage, countSearch, renderFooter } from './footer';
 import { closePop } from './popover';
-import { type Cond, saveSettings, siteById, state } from './state';
+import { type Cond, condFilter, condsOf, saveSettings, siteById, state } from './state';
 import { columns, listingRow } from './rows';
 import { storePicker } from './storepick';
 import { t } from './strings';
 
-const condFilter = (c: Iterable<Cond>): ConditionFilter => {
-  const s = new Set(c);
-  return s.has('new') && s.has('used') ? 'any' : s.has('used') ? 'used' : s.has('new') ? 'new' : 'any';
-};
-const condsOf = (f: ConditionFilter): Cond[] => (f === 'any' ? ['new', 'used'] : [f]);
 const isRunning = () => state.running.size > 0;
 const searched = () => state.searchedSites.size > 0 || state.listings.length > 0;
 
