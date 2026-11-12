@@ -11,13 +11,15 @@
 //!    consegue ler sozinho.
 
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
     time::Duration,
 };
 
 use anyhow::{anyhow, bail, Result};
+use futures_util::StreamExt;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use snipr_browser::Card;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -27,7 +29,7 @@ use crate::{
     cli::{self, Mcp},
     config::Settings,
     engine::{unix_now, Backend, Engine, EventSink, Tier},
-    fetch, parse, prompts,
+    fetch, offers, parse, prompts,
     sites::{Api, Site, Stage},
     tools::{listing_from_card, Sink, SessionHook, ToolBox, ToolBoxInit},
     types::{AgentInfo, Condition, Listing, SearchEvent, SearchPlan, SearchRequest},
@@ -50,6 +52,9 @@ const MAX_CHECKS_DEEP: usize = 24;
 const MAX_GENERIC: usize = 25;
 /// Páginas de anúncio por chamada à IA na conferência de detalhes.
 const PAGES_PER_CALL: usize = 6;
+/// Anúncios por loja cuja página o Snipr lê (sem IA) para achar o preço no
+/// PIX, as parcelas e os cupons. Os mais baratos primeiro.
+const MAX_ENRICH: usize = 10;
 
 pub(crate) struct Ctx {
     job: String,
@@ -62,6 +67,48 @@ pub(crate) struct Ctx {
     cancel: CancellationToken,
     /// Abas do Chrome em uso ao mesmo tempo.
     chrome: Arc<Semaphore>,
+    /// Anúncios cuja página já foi lida na conferência de detalhes.
+    read_pages: Mutex<HashSet<String>>,
+    memo: Option<Arc<Mutex<Memo>>>,
+}
+
+/// Vereditos da IA de execuções anteriores de uma busca automática. Um
+/// anúncio já julgado não volta para a IA: só os novos custam tokens.
+#[derive(Default, Serialize, Deserialize)]
+pub(crate) struct Memo {
+    kept: HashMap<String, (Condition, usize)>,
+    dropped: HashSet<String>,
+}
+
+impl Memo {
+    const MAX: usize = 4000;
+
+    /// `Some(None)`: recusado antes. `Some(Some(..))`: aceito, com condição e preço.
+    fn verdict(&self, card: &Card) -> Option<Option<(Condition, usize)>> {
+        let k = crate::tools::dedupe_key(&card.url, &card.title);
+        if self.dropped.contains(&k) {
+            return Some(None);
+        }
+        self.kept.get(&k).map(|v| Some(*v))
+    }
+
+    fn remember(&mut self, card: &Card, hit: Option<(Condition, usize)>) {
+        if self.kept.len() + self.dropped.len() >= Self::MAX {
+            self.kept.clear();
+            self.dropped.clear();
+        }
+        let k = crate::tools::dedupe_key(&card.url, &card.title);
+        match hit {
+            Some(v) => {
+                self.dropped.remove(&k);
+                self.kept.insert(k, v);
+            }
+            None => {
+                self.kept.remove(&k);
+                self.dropped.insert(k);
+            }
+        }
+    }
 }
 
 enum Got {
@@ -83,7 +130,8 @@ struct Batch {
     cards: Vec<Card>,
     /// Link usado quando o card não expõe o link do anúncio.
     fallback_url: String,
-    done: oneshot::Sender<Result<usize, String>>,
+    /// Anúncios aceitos da loja.
+    done: oneshot::Sender<Result<Vec<Listing>, String>>,
 }
 
 impl Engine {
@@ -98,7 +146,8 @@ impl Engine {
         events: &EventSink,
         listings: Arc<Mutex<Vec<Listing>>>,
         cancel: CancellationToken,
-    ) {
+        memo: Option<Arc<Mutex<Memo>>>,
+    ) -> Option<SearchPlan> {
         let agents: Vec<AgentInfo> = sites
             .iter()
             .enumerate()
@@ -123,7 +172,7 @@ impl Engine {
             let _ = events.send(SearchEvent::Usage { job: job.into(), agent: None, usage });
         }
         if cancel.is_cancelled() {
-            return;
+            return None;
         }
         let _ = events.send(SearchEvent::Planned { job: job.into(), plan: plan.clone() });
         if req.max_price.is_none() {
@@ -150,6 +199,8 @@ impl Engine {
             sink,
             events: events.clone(),
             cancel: cancel.clone(),
+            read_pages: Default::default(),
+            memo,
         });
 
         let (tx, rx) = mpsc::unbounded_channel::<Batch>();
@@ -180,6 +231,7 @@ impl Engine {
         drop(tx);
         while set.join_next().await.is_some() {}
         let _ = judge.await;
+        Some(ctx.plan.clone())
     }
 
     async fn plan_or(&self, settings: &Settings, query: &str, given: Option<SearchPlan>, cancel: &CancellationToken) -> (SearchPlan, crate::types::Usage) {
@@ -204,7 +256,12 @@ impl Engine {
                 judge
                     .send(Batch { site: site.clone(), agent: agent.to_string(), cards, fallback_url, done })
                     .map_err(|_| anyhow!("filtro indisponível"))?;
-                let n = result.await.map_err(|_| anyhow!("filtro interrompido"))?.map_err(|e| anyhow!(e))?;
+                let kept = result.await.map_err(|_| anyhow!("filtro interrompido"))?.map_err(|e| anyhow!(e))?;
+                let n = kept.len();
+                // Etapa D: abrir cada anúncio no Chrome custa caro; fica só o que o card mostra.
+                if stage != Stage::D && ctx.settings.offer_details {
+                    self.enrich(ctx, site, agent, stage, kept).await;
+                }
                 Ok(format!("{n} anúncio(s) · etapa {}", stage.label()))
             }
         }
@@ -425,6 +482,8 @@ impl Engine {
         let max = ctx.req.max_price;
         let mut cand: Vec<(usize, Card)> = Vec::new();
         let mut rows = Vec::new();
+        // Ids enviados à IA e ids aceitos de execuções anteriores (com condição e preço).
+        let (mut asked, mut remembered) = (Vec::<usize>::new(), Vec::<(usize, Condition, usize)>::new());
         for (bi, b) in batches.iter().enumerate() {
             let usable: Vec<&Card> = b
                 .cards
@@ -443,14 +502,26 @@ impl Engine {
                 short.extend(extra);
             }
             for card in short {
-                rows.push(prompts::judge_row(cand.len() + 1, &b.site.name, card));
+                // Busca automática: anúncios já julgados numa execução anterior não voltam para a IA.
+                match ctx.memo.as_ref().and_then(|m| m.lock().verdict(card)) {
+                    Some(None) => continue,
+                    Some(Some((cond, pidx))) => remembered.push((cand.len() + 1, cond, pidx)),
+                    None => {
+                        rows.push(prompts::judge_row(cand.len() + 1, &b.site.name, card));
+                        asked.push(cand.len() + 1);
+                    }
+                }
                 cand.push((bi, card.clone()));
             }
         }
         let max_checks = if deep { MAX_CHECKS_DEEP } else { MAX_CHECKS };
-        if cand.is_empty() {
-            for b in batches {
-                let _ = b.done.send(Ok(0));
+        let mut kept: Vec<Vec<Listing>> = vec![Vec::new(); batches.len()];
+        for (id, cond, pidx) in &remembered {
+            self.keep(ctx, &batches, &cand, *id, *cond, *pidx, None, &mut kept);
+        }
+        if rows.is_empty() {
+            for (b, k) in batches.into_iter().zip(kept) {
+                let _ = b.done.send(Ok(k));
             }
             return;
         }
@@ -475,40 +546,102 @@ impl Engine {
             }
         };
 
-        let mut counts = vec![0usize; batches.len()];
+        let mut accepted: Vec<(usize, Condition, usize)> = Vec::new();
         for (id, cond, pidx) in &verdict.keep {
-            self.keep(ctx, &batches, &cand, *id, *cond, *pidx, &mut counts);
+            self.keep(ctx, &batches, &cand, *id, *cond, *pidx, None, &mut kept);
+            accepted.push((*id, *cond, *pidx));
         }
         let checks: Vec<usize> = verdict.check.iter().copied().filter(|id| (1..=cand.len()).contains(id)).take(max_checks).collect();
+        let mut unsure: Vec<usize> = Vec::new();
         if !checks.is_empty() {
             for b in &batches {
                 ctx.sink.log(&b.agent, format!("lendo a descrição de {} anúncio(s)", checks.len()));
             }
             match self.check_details(ctx, &batches, &cand, &checks).await {
-                Ok(v) => {
+                Ok((v, pages)) => {
                     for (id, cond, pidx) in &v.keep {
                         if checks.contains(id) {
-                            self.keep(ctx, &batches, &cand, *id, *cond, *pidx, &mut counts);
+                            self.keep(ctx, &batches, &cand, *id, *cond, *pidx, pages.get(id).map(String::as_str), &mut kept);
+                            accepted.push((*id, *cond, *pidx));
                         }
                     }
+                    // Página que não abriu: sem veredito, a próxima execução pergunta de novo.
+                    unsure.extend(checks.iter().filter(|id| !pages.contains_key(id)));
                 }
-                Err(e) => tracing::warn!("conferência de detalhes falhou: {e:#}"),
+                Err(e) => {
+                    tracing::warn!("conferência de detalhes falhou: {e:#}");
+                    unsure.extend(&checks);
+                }
             }
         }
-        for (b, n) in batches.into_iter().zip(counts) {
-            let _ = b.done.send(Ok(n));
+        if let Some(m) = &ctx.memo {
+            let mut m = m.lock();
+            for id in asked.iter().filter(|id| !unsure.contains(id)) {
+                let card = &cand[id - 1].1;
+                let hit = accepted.iter().find(|(a, _, _)| a == id).map(|(_, c, p)| (*c, *p));
+                m.remember(card, hit);
+            }
+        }
+        for (b, k) in batches.into_iter().zip(kept) {
+            let _ = b.done.send(Ok(k));
         }
     }
 
+    /// Registra o anúncio `id`. `page`: texto da página do anúncio, se já foi lida.
     #[allow(clippy::too_many_arguments)]
-    fn keep(&self, ctx: &Ctx, batches: &[Batch], cand: &[(usize, Card)], id: usize, cond: Condition, pidx: usize, counts: &mut [usize]) {
+    fn keep(&self, ctx: &Ctx, batches: &[Batch], cand: &[(usize, Card)], id: usize, cond: Condition, pidx: usize, page: Option<&str>, kept: &mut [Vec<Listing>]) {
         let Some((bi, card)) = id.checked_sub(1).and_then(|i| cand.get(i)) else { return };
         let b = &batches[*bi];
         let prices = parse::sorted_prices(card);
         let Some(price) = prices.get(pidx).or(prices.first()).copied() else { return };
-        let listing = listing_from_card(&b.site, card, price, cond, &b.fallback_url);
-        if let Ok(true) = ctx.sink.accept(&b.agent, listing) {
-            counts[*bi] += 1;
+        let mut listing = listing_from_card(&b.site, card, price, cond, &b.fallback_url);
+        if let Some(text) = page {
+            offers::apply(&mut listing, &offers::read(text, true));
+            ctx.read_pages.lock().insert(listing.url.clone());
+        }
+        if let Ok(true) = ctx.sink.accept(&b.agent, listing.clone()) {
+            kept[*bi].push(listing);
+        }
+    }
+
+    /// Lê por HTTP a página dos anúncios aceitos (sem IA) e completa o preço
+    /// no PIX, as parcelas e os cupons.
+    async fn enrich(&self, ctx: &Ctx, site: &Site, agent: &str, stage: Stage, mut kept: Vec<Listing>) {
+        {
+            let read = ctx.read_pages.lock();
+            kept.retain(|l| !read.contains(&l.url) && l.url.starts_with("http"));
+        }
+        kept.sort_by(|a, b| a.price.total_cmp(&b.price));
+        kept.truncate(MAX_ENRICH);
+        if kept.is_empty() || ctx.cancel.is_cancelled() {
+            return;
+        }
+        ctx.sink.log(agent, format!("lendo parcelas e cupons de {} anúncio(s)", kept.len()));
+        let cookie = if stage == Stage::C { self.fetcher.cookie(&site.id) } else { None };
+        let fails = std::sync::atomic::AtomicUsize::new(0);
+        let work = futures_util::stream::iter(kept).for_each_concurrent(3, |mut l| {
+            let (cookie, fails) = (cookie.as_deref(), &fails);
+            async move {
+                // Dois bloqueios seguidos: a loja não quer mais pedidos agora.
+                if fails.load(std::sync::atomic::Ordering::Relaxed) >= 2 || ctx.cancel.is_cancelled() {
+                    return;
+                }
+                let page = match self.fetcher.get(stage, &l.url, cookie).await {
+                    Ok(p) if fetch::blocked(&p).is_none() => p,
+                    _ => {
+                        fails.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        return;
+                    }
+                };
+                let text = parse::text_from_html(&page.body, 12_000);
+                if offers::apply(&mut l, &offers::read(&text, true)) {
+                    ctx.sink.update(agent, l);
+                }
+            }
+        });
+        tokio::select! {
+            _ = work => {}
+            _ = ctx.cancel.cancelled() => {}
         }
     }
 
@@ -538,7 +671,13 @@ impl Engine {
     }
 
     /// Abre os anúncios duvidosos (com seções recolhidas abertas) e pergunta de novo.
-    async fn check_details(self: &Arc<Self>, ctx: &Arc<Ctx>, batches: &[Batch], cand: &[(usize, Card)], ids: &[usize]) -> Result<prompts::Verdict> {
+    async fn check_details(
+        self: &Arc<Self>,
+        ctx: &Arc<Ctx>,
+        batches: &[Batch],
+        cand: &[(usize, Card)],
+        ids: &[usize],
+    ) -> Result<(prompts::Verdict, HashMap<usize, String>)> {
         let reads = ids.iter().map(|id| async move {
             let (bi, card) = &cand[id - 1];
             let b = &batches[*bi];
@@ -546,12 +685,13 @@ impl Engine {
                 return None;
             }
             let text = self.page_text(ctx, &b.site, &b.agent, &card.url).await.map_err(|e| tracing::debug!("detalhes de {}: {e:#}", card.url)).ok()?;
-            Some(format!("### {id} | {} | {}\n{}\n", b.site.name, card.title, text))
+            Some((*id, format!("### {id} | {} | {}\n{}\n", b.site.name, card.title, text)))
         });
-        let texts: Vec<String> = futures_util::future::join_all(reads).await.into_iter().flatten().collect();
-        if texts.is_empty() {
+        let pages: HashMap<usize, String> = futures_util::future::join_all(reads).await.into_iter().flatten().collect();
+        if pages.is_empty() {
             bail!("nenhuma página de anúncio pôde ser lida");
         }
+        let texts: Vec<&str> = pages.values().map(String::as_str).collect();
         // Poucas páginas por chamada: o prompt fica curto e as chamadas correm juntas.
         let plan = prompts::plan_text(&ctx.req, &ctx.plan);
         let calls = texts.chunks(PAGES_PER_CALL).map(|chunk| {
@@ -568,7 +708,7 @@ impl Engine {
         }
         match last {
             Some(e) if out.keep.is_empty() => Err(e),
-            _ => Ok(out),
+            _ => Ok((out, pages)),
         }
     }
 
@@ -777,6 +917,8 @@ mod tests {
             settings,
             events: tx,
             cancel: CancellationToken::new(),
+            read_pages: Default::default(),
+            memo: None,
         });
         let words = parse::tokens(&format!("{} {} {}", ctx.plan.product, ctx.plan.alternatives.join(" "), ctx.plan.search_terms.join(" ")));
         let mut set = tokio::task::JoinSet::new();

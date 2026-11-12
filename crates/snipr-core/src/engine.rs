@@ -26,8 +26,11 @@ use crate::{
     cli::{self, CliKind, CliRun, CliStatus},
     config::{AiSettings, AuthMode, Paths, Provider, SessionState, Settings},
     fetch::Fetcher,
+    history,
     mcp::McpServer,
-    models, prompts, secrets,
+    models, prompts, schedule,
+    search::Memo,
+    secrets,
     sites::{self, Site, StageInfo, Suggestion},
     tools::{HumanGates, ToolBox},
     types::{BrowserStatus, DetectedBrowser, Listing, SearchEvent, SearchPlan, SearchRequest, Usage},
@@ -50,10 +53,12 @@ pub struct Engine {
     pub(crate) fetcher: Fetcher,
     /// Modelos listados por provedor (para escolher o modelo rápido).
     model_lists: Mutex<HashMap<String, Vec<String>>>,
+    pub(crate) history: history::Store,
+    pub(crate) auto: schedule::State,
     /// Runtime onde o Engine foi criado. Os métodos síncronos (ex.: `start_search`)
     /// podem ser chamados de qualquer thread — inclusive a thread da interface,
     /// que não tem runtime Tokio — e todo trabalho assíncrono vai para cá.
-    rt: tokio::runtime::Handle,
+    pub(crate) rt: tokio::runtime::Handle,
 }
 
 pub(crate) enum Backend {
@@ -84,7 +89,10 @@ impl Engine {
     pub(crate) async fn with_paths(paths: Paths) -> Result<Arc<Self>> {
         let settings = paths.load_settings();
         let mcp = McpServer::start().await?;
+        let dir = paths.dir();
         Ok(Arc::new(Self {
+            history: history::Store::open(&dir),
+            auto: schedule::State::load(&dir),
             paths,
             settings: RwLock::new(settings),
             browser: tokio::sync::Mutex::new(None),
@@ -721,20 +729,36 @@ impl Engine {
         }
     }
 
+    /// Cancela as buscas manuais. As automáticas continuam.
     pub async fn cancel_all(&self) {
-        let tokens: Vec<CancellationToken> = self.jobs.lock().values().cloned().collect();
-        for c in &tokens {
+        let manual = |jobs: &HashMap<String, CancellationToken>| -> Vec<CancellationToken> {
+            let auto = self.auto.jobs();
+            jobs.iter().filter(|(j, _)| !auto.contains(*j)).map(|(_, c)| c.clone()).collect()
+        };
+        for c in manual(&self.jobs.lock()) {
             c.cancel();
         }
         self.gates.cancel_all();
         let start = Instant::now();
-        while !self.jobs.lock().is_empty() && start.elapsed() < Duration::from_secs(15) {
+        while !manual(&self.jobs.lock()).is_empty() && start.elapsed() < Duration::from_secs(15) {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
     /// Inicia uma busca e devolve o id do job. Os resultados chegam em `sink`.
     pub fn start_search(self: &Arc<Self>, req: SearchRequest, sink: EventSink) -> Result<String> {
+        self.launch(req, sink, None, None)
+    }
+
+    /// Inicia um job. Sem `done`, é uma busca manual (vai para o histórico
+    /// manual, se ligado); com `done`, quem chamou recebe o resultado.
+    pub(crate) fn launch(
+        self: &Arc<Self>,
+        req: SearchRequest,
+        sink: EventSink,
+        memo: Option<Arc<Mutex<Memo>>>,
+        done: Option<tokio::sync::oneshot::Sender<JobResult>>,
+    ) -> Result<String> {
         if req.query.trim().len() < 2 {
             bail!("Descreva o produto que você quer buscar.");
         }
@@ -757,19 +781,60 @@ impl Engine {
         self.rt.spawn(async move {
             let started = Instant::now();
             let listings = Arc::new(Mutex::new(Vec::<Listing>::new()));
-            me.run_job(&job_id, req, settings, all_sites, sites, &sink, listings.clone(), cancel.clone()).await;
-            let total = listings.lock().len();
-            let _ = sink.send(SearchEvent::Finished {
-                job: job_id.clone(),
-                total,
-                elapsed_ms: started.elapsed().as_millis(),
-                cancelled: cancel.is_cancelled(),
-            });
+            let query = req.query.clone();
+            let site_ids: Vec<String> = sites.iter().map(|s| s.id.clone()).collect();
+            let history = settings.history_manual && done.is_none();
+            let plan = me.run_job(&job_id, req, settings, all_sites, sites, &sink, listings.clone(), cancel.clone(), memo).await;
+            let listings = std::mem::take(&mut *listings.lock());
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            let cancelled = cancel.is_cancelled();
+            if history && !cancelled {
+                let entry = history::Entry {
+                    at: unix_now(),
+                    query: &query,
+                    schedule: None,
+                    sites: &site_ids,
+                    plan: plan.as_ref(),
+                    elapsed_ms,
+                    listings: &listings,
+                };
+                if let Err(e) = me.history.append(history::Kind::Manual, &entry) {
+                    tracing::warn!("não foi possível gravar o histórico: {e:#}");
+                }
+            }
+            let total = listings.len();
+            if let Some(d) = done {
+                let _ = d.send(JobResult { plan, listings, elapsed_ms, cancelled });
+            }
+            let _ = sink.send(SearchEvent::Finished { job: job_id.clone(), total, elapsed_ms: elapsed_ms as u128, cancelled });
             me.jobs.lock().remove(&job_id);
             me.release();
         });
         Ok(job)
     }
+
+    // ---------- arquivos locais ----------
+
+    /// Links de anúncios que o usuário já abriu (sem consulta nem âncora).
+    pub fn visited(&self) -> Vec<String> {
+        self.history.visited()
+    }
+
+    pub fn mark_visited(&self, url: &str) -> Result<()> {
+        self.history.visit(url)
+    }
+
+    /// Pasta com os ajustes, o histórico e as buscas automáticas.
+    pub fn data_dir(&self) -> PathBuf {
+        self.history.dir().to_path_buf()
+    }
+}
+
+pub(crate) struct JobResult {
+    pub plan: Option<SearchPlan>,
+    pub listings: Vec<Listing>,
+    pub elapsed_ms: u64,
+    pub cancelled: bool,
 }
 
 pub(crate) fn unix_now() -> u64 {

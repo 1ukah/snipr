@@ -30,6 +30,7 @@ scraper.workspace = true
 ego-tree.workspace = true
 regex.workspace = true
 futures-util.workspace = true
+chrono.workspace = true
 
 # Cofre de segredos nativo de cada sistema operacional.
 [dev-dependencies]

@@ -316,7 +316,7 @@ fn embedded_cards(doc: &Html, base: &Url, json_url: Option<&str>) -> Vec<Card> {
         if prices.is_empty() {
             continue;
         }
-        out.push(Card { title, prices: prices.into_iter().map(format_brl).collect(), old, url: card_url(&u), extra: String::new(), intl: false });
+        out.push(Card { title, prices: prices.into_iter().map(format_brl).collect(), old, url: card_url(&u), ..Default::default() });
     }
     out
 }
@@ -510,7 +510,7 @@ fn dom_cards(doc: &Html, ctx: &Ctx, max: usize) -> Vec<Card> {
         urls.insert(url.clone());
         let extra: String = clean(&PRICE.replace_all(&text.replacen(&title, "", 1), " ")).chars().take(170).collect();
         let intl = is_intl(b, &text);
-        cards.push(Card { title: title.chars().take(160).collect(), prices, old, url, extra, intl });
+        cards.push(Card { title: title.chars().take(160).collect(), prices, old, url, extra, intl, text: text.chars().take(600).collect() });
     }
     cards
 }
@@ -586,15 +586,26 @@ pub fn cards_from_vtex(json: &str, max: usize) -> Vec<Card> {
             .flat_map(|i| i["sellers"].as_array().cloned().unwrap_or_default())
             .map(|s| s["commertialOffer"].clone())
             .filter(|o| o["AvailableQuantity"].as_f64().unwrap_or(0.0) > 0.0)
-            .filter_map(|o| Some((o["Price"].as_f64().filter(|p| *p > 0.0)?, o["ListPrice"].as_f64().unwrap_or(0.0))))
+            .filter_map(|o| Some((o["Price"].as_f64().filter(|p| *p > 0.0)?, o["ListPrice"].as_f64().unwrap_or(0.0), o)))
             .min_by(|a, b| a.0.total_cmp(&b.0));
-        let Some((price, list)) = best else { continue };
+        let Some((price, list, offer)) = best else { continue };
         if title.is_empty() || !url.starts_with("http") {
             continue;
         }
         let old = if list > price { vec![format_brl(list)] } else { Vec::new() };
         let extra = p["brand"].as_str().unwrap_or_default().to_string();
-        out.push(Card { title, prices: vec![format_brl(price)], old, url, extra, intl: false });
+        // Maior parcelamento sem juros da oferta, no formato que `offers` lê.
+        let text = offer["Installments"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|i| i["InterestRate"].as_f64().unwrap_or(0.0) == 0.0)
+            .filter_map(|i| Some((i["NumberOfInstallments"].as_u64()?, i["Value"].as_f64()?)))
+            .max_by_key(|(n, _)| *n)
+            .filter(|(n, _)| *n >= 2)
+            .map(|(n, v)| format!("{n}x de {} sem juros", format_brl(v)))
+            .unwrap_or_default();
+        out.push(Card { title, prices: vec![format_brl(price)], old, url, extra, text, ..Default::default() });
     }
     out
 }

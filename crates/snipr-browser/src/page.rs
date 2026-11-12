@@ -43,6 +43,9 @@ pub struct Card {
     /// Texto restante do card (condição, vendedor, cidade, frete…).
     pub extra: String,
     pub intl: bool,
+    /// Texto do card com os preços, para ler parcelas, PIX e cupons sem IA.
+    /// Não vai para o filtro da IA.
+    pub text: String,
 }
 
 pub struct Page {
