@@ -3,4 +3,4 @@ import type { Schedule } from "./Schedule";
 import type { SearchEvent } from "./SearchEvent";
 import type { Usage } from "./Usage";
 
-export type ScheduleEvent = { "type": "changed", schedule: Schedule, } | { "type": "removed", id: string, } | { "type": "usage", usage: Usage, } | { "type": "progress", id: string, event: SearchEvent, };
+export type ScheduleEvent = { "type": "changed", schedule: Schedule, } | { "type": "removed", id: string, } | { "type": "usage", id: string, usage: Usage, } | { "type": "progress", id: string, event: SearchEvent, };

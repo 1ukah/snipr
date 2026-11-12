@@ -125,7 +125,7 @@ pub enum ScheduleEvent {
     Changed { schedule: Box<Schedule> },
     Removed { id: String },
     /// Uso da IA de uma execução (para os totais da interface).
-    Usage { usage: Usage },
+    Usage { id: String, usage: Usage },
     /// Andamento de uma execução: lojas (`started`), mensagens (`log`) e fim
     /// de cada loja (`agent_finished`).
     Progress { id: String, event: Box<SearchEvent> },
@@ -415,7 +415,7 @@ impl Engine {
         let (mut failed, mut total, mut first_error) = (0, 0, None);
         while let Some(ev) = rx.recv().await {
             match ev {
-                SearchEvent::Usage { usage, .. } => self.auto.emit(ScheduleEvent::Usage { usage }),
+                SearchEvent::Usage { usage, .. } => self.auto.emit(ScheduleEvent::Usage { id: id.to_string(), usage }),
                 SearchEvent::AgentFinished { ok, ref summary, .. } => {
                     total += 1;
                     if !ok {
@@ -528,7 +528,7 @@ mod tests {
             let (mut tokens, mut calls) = (0, 0);
             loop {
                 match rx.recv().await.unwrap() {
-                    ScheduleEvent::Usage { usage } => {
+                    ScheduleEvent::Usage { usage, .. } => {
                         calls += 1;
                         tokens += usage.input_tokens + usage.output_tokens;
                     }

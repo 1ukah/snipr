@@ -163,6 +163,10 @@ export const t = {
   agentsDone: (done: number, total: number) => `${done}/${total} lojas`,
 
   total: 'Total',
+  totalAuto: 'Total automáticas',
+  autoRun: 'Execução',
+  avgPerRun: (n: string) => `média ${n}/execução`,
+  runs: (n: number) => `${n} ${n === 1 ? 'execução' : 'execuções'}`,
   tokens: (n: string) => `${n} tokens`,
   searches: (n: number) => `${n} ${n === 1 ? 'busca' : 'buscas'}`,
   avgPerSearch: (n: string) => `média ${n}/busca`,

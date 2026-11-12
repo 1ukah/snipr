@@ -4,7 +4,7 @@ import type { Schedule } from './bindings/Schedule';
 import type { ScheduleEvent } from './bindings/ScheduleEvent';
 import type { ScheduleResults } from './bindings/ScheduleResults';
 import { $, check, el, errText, icon, toast } from './dom';
-import { addTotalUsage } from './footer';
+import { addAutoUsage, autoRunFinished, autoRunStarted, bindAutoView, renderFooter } from './footer';
 import { segment } from './popover';
 import { columns, listingRow } from './rows';
 import { paintAgents, trackAgents } from './progress';
@@ -283,6 +283,7 @@ function pick(id: string | null) {
   draft = s ? structuredClone(s) : blank();
   results = null;
   renderAuto();
+  renderFooter();
   if (id) loadResults(id);
 }
 
@@ -321,11 +322,13 @@ async function remove() {
 }
 
 function onAuto(ev: ScheduleEvent) {
-  if (ev.type === 'usage') return addTotalUsage(ev.usage);
+  if (ev.type === 'usage') return addAutoUsage(ev.id, ev.usage);
   if (ev.type === 'progress') {
     let agents = progress.get(ev.id);
     if (!agents) progress.set(ev.id, (agents = new Map()));
     trackAgents(agents, ev.event);
+    if (ev.event.type === 'started') autoRunStarted(ev.id);
+    else if (selected === ev.id) renderFooter();
     if (state.tab === 'auto' && selected === ev.id) renderProgress();
     return;
   }
@@ -339,6 +342,7 @@ function onAuto(ev: ScheduleEvent) {
   const was = byId(s.id);
   upsert(s);
   const finished = was?.running && !s.running;
+  if (finished) autoRunFinished(s.id);
   if (finished && s.last_new > 0) toast(t.autoNew(s.query, s.last_new));
   if (state.tab !== 'auto') return renderSide();
   if (selected === s.id) {
@@ -353,6 +357,7 @@ function onAuto(ev: ScheduleEvent) {
 export async function initAuto() {
   list = await api.schedules().catch(() => []);
   api.onAuto(onAuto);
+  bindAutoView(() => ({ id: selected, running: !!byId(selected)?.running, agents: [...(progress.get(selected ?? '')?.values() ?? [])] }));
   renderSide();
 }
 

@@ -7,7 +7,7 @@ import { finishLogin, renderAccounts } from './accounts';
 import { api } from './api';
 import { initAuto, openAuto } from './auto';
 import { $, $$, errText, toast, translate } from './dom';
-import { initFooter } from './footer';
+import { initFooter, renderFooter } from './footer';
 import { closePop, isPopOpen } from './popover';
 import { initSearch, render } from './search';
 import { initSettings, renderSettings } from './settings';
@@ -41,6 +41,7 @@ function setTab(tab: 'search' | 'auto') {
   $$('#tabs [role=tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
   if (tab === 'auto') openAuto();
   else render();
+  renderFooter();
 }
 
 function wire() {
