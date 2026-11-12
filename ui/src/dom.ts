@@ -45,6 +45,10 @@ export function translate(root: ParentNode = document) {
   $$('[data-t-aria]', root).forEach((n) => n.setAttribute('aria-label', str(n.dataset.tAria!)));
 }
 
+export function check(on: boolean, onclick: () => void, kids: Child[], props: Props = {}) {
+  return el('button', { type: 'button', class: 'ck', role: 'checkbox', 'aria-checked': String(on), onclick, ...props }, el('span', { class: 'box' }, icon('i-check')), ...kids);
+}
+
 export const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 let toastTimer = 0;

@@ -34,8 +34,9 @@ export function togglePop(box: HTMLElement, btn: HTMLElement, build: (pop: HTMLE
   target?.focus();
 }
 
+// composedPath: a click that re-renders the list removes its own target from the DOM.
 document.addEventListener('click', (e) => {
-  if (open && !open.box.contains(e.target as Node)) closePop();
+  if (open && !e.composedPath().includes(open.box)) closePop();
 });
 
 export interface SelectOptions<V extends string> {

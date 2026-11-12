@@ -3,10 +3,11 @@ import type { ConditionFilter } from './bindings/ConditionFilter';
 import type { SearchEvent } from './bindings/SearchEvent';
 import type { SearchPlan } from './bindings/SearchPlan';
 import type { SearchRequest } from './bindings/SearchRequest';
-import { $, $$, el, errText, fold, icon, toast } from './dom';
+import { $, $$, check, el, errText, fold, icon, toast } from './dom';
 import { addUsage, countSearch, renderFooter } from './footer';
-import { closePop, togglePop } from './popover';
+import { closePop } from './popover';
 import { type Cond, saveSettings, siteById, state } from './state';
+import { storePicker } from './storepick';
 import { t } from './strings';
 
 const condFilter = (c: Iterable<Cond>): ConditionFilter => {
@@ -33,10 +34,6 @@ const inText = (l: { title: string; site_name: string }) => {
 
 function visible() {
   return state.listings.filter((l) => inIntl(l) && inText(l) && inPrice(l.price) && inCond(l.condition) && inSite(l.site_id)).sort((a, b) => a.price - b.price);
-}
-
-function check(on: boolean, onclick: () => void, kids: (Node | string | null)[]) {
-  return el('button', { type: 'button', class: 'ck', role: 'checkbox', 'aria-checked': String(on), onclick }, el('span', { class: 'box' }, icon('i-check')), ...kids);
 }
 
 function persistFilters() {
@@ -77,100 +74,24 @@ function renderOrigin() {
   );
 }
 
-let storeQ = '';
-let storeList: HTMLElement | null = null;
-
-function storesSummary() {
-  const n = state.selected.size;
-  const total = state.sites.length;
-  if (n === total) return t.allStores;
-  if (n === 0) return t.noStore;
-  if (n === 1) return siteById([...state.selected][0])?.name ?? '';
-  return t.storesCount(n, total);
-}
-
-function paintStoreList() {
-  if (!storeList) return;
-  const base = state.listings.filter((l) => inIntl(l) && inText(l) && inPrice(l.price) && inCond(l.condition));
-  const q = fold(storeQ.trim());
-  const shown = state.sites.filter((s) => fold(s.name).includes(q) || fold(s.domain).includes(q));
-  storeList.replaceChildren(
-    ...(shown.length
-      ? shown.map((s) =>
-          check(
-            state.selected.has(s.id),
-            () => {
-              if (state.selected.has(s.id)) state.selected.delete(s.id);
-              else state.selected.add(s.id);
-              persistFilters();
-              render();
-            },
-            [
-              el('span', { class: 'nm', title: s.name }, s.name, s.requires_login ? el('small', { text: t.requiresLogin }) : null),
-              el('span', { class: 'n', text: state.searchedSites.has(s.id) ? base.filter((l) => l.site_id === s.id).length : '' }),
-            ],
-          ),
-        )
-      : [el('div', { class: 'none', text: t.noStoreFound })]),
-  );
-}
-
-function buildStores(pop: HTMLElement) {
-  const find = el('input', {
-    type: 'text',
-    placeholder: t.findStore,
-    'aria-label': t.findStore,
-    value: storeQ,
-    spellcheck: 'false',
-    oninput: (e: Event) => {
-      storeQ = (e.target as HTMLInputElement).value;
-      paintStoreList();
-    },
-  });
-  storeList = el('div');
-  pop.append(
-    el('label', { class: 'find' }, icon('i-search'), find),
-    el(
-      'div',
-      { class: 'hd' },
-      el('button', {
-        type: 'button',
-        text: t.selectAll,
-        onclick: () => {
-          state.selected = new Set(state.sites.map((s) => s.id));
-          persistFilters();
-          render();
-        },
-      }),
-      el('button', {
-        type: 'button',
-        text: t.restoreDefault,
-        onclick: () => {
-          state.selected = new Set(state.sites.filter((s) => !s.requires_login && !['olx', 'enjoei'].includes(s.id)).map((s) => s.id));
-          persistFilters();
-          render();
-        },
-      }),
-    ),
-    storeList,
-  );
-  paintStoreList();
-}
+let stores: ReturnType<typeof storePicker> | null = null;
 
 function renderStores() {
-  const box = $('#stores');
-  let btn = box.querySelector<HTMLButtonElement>(':scope > button');
-  if (!btn) {
-    btn = el('button', { type: 'button', 'aria-haspopup': 'listbox', 'aria-expanded': 'false' });
-    const b = btn;
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      togglePop(box, b, buildStores, true);
-    });
-    box.append(b);
-  }
-  btn.replaceChildren(el('span', { class: 'val', text: storesSummary() }), icon('i-down'));
-  if (box.classList.contains('open')) paintStoreList();
+  stores ??= storePicker($('#stores'), {
+    selected: () => state.selected,
+    onChange: (next) => {
+      state.selected = next;
+      persistFilters();
+      render();
+    },
+    counts: () => {
+      const out: Record<string, number> = {};
+      for (const id of state.searchedSites) out[id] = 0;
+      for (const l of state.listings) if (l.site_id in out && inIntl(l) && inText(l) && inPrice(l.price) && inCond(l.condition)) out[l.site_id]++;
+      return out;
+    },
+  });
+  stores.paint();
 }
 
 function bounds(): [number, number] {

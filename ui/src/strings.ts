@@ -27,6 +27,7 @@ export const t = {
   noStore: 'Nenhuma loja',
   storesCount: (n: number, total: number) => `${n} de ${total} lojas`,
   selectAll: 'Selecionar todas',
+  deselectAll: 'Desselecionar todas',
   restoreDefault: 'Restaurar padrão',
 
   progress: 'Progresso',
