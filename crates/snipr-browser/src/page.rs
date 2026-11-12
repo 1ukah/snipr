@@ -278,6 +278,7 @@ impl Page {
     pub async fn extract_cards(&self, max_cards: usize) -> Result<Vec<Card>> {
         self.ensure_loaded().await;
         let read = || async {
+            let _ = self.eval(js::SHOW_LAZY).await;
             let v = self.call_fn(js::EXTRACT_LISTINGS, &[json!(max_cards)]).await?;
             Ok::<_, anyhow::Error>(serde_json::from_str::<Vec<Card>>(v.as_str().unwrap_or("[]"))?)
         };
@@ -292,6 +293,7 @@ impl Page {
 
     pub async fn read_text(&self, max_chars: usize) -> Result<String> {
         self.ensure_loaded().await;
+        let _ = self.eval(js::SHOW_LAZY).await;
         let v = self.call_fn(js::READ_TEXT, &[json!(max_chars)]).await?;
         Ok(v.as_str().unwrap_or_default().to_string())
     }

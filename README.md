@@ -111,8 +111,8 @@ Ao adicionar uma loja (ou em **Lojas > Verificar lojas**), o Snipr:
    mais leve que lê pelo menos 70% dos anúncios da referência.
 
 A etapa fica salva nos ajustes. Durante uma busca, se a etapa falhar (bloqueio
-ou página sem cards), o Snipr sobe para a próxima e grava a nova. A cada 7 dias
-ele testa de novo a etapa mais leve.
+ou página sem cards), o Snipr sobe para a próxima e grava a nova. Uma vez por
+dia ele testa de novo a etapa mais leve.
 
 Os segredos (tokens e API keys) ficam no cofre do sistema
 (Credential Manager / Keychain / Secret Service). A interface só consegue

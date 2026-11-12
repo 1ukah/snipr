@@ -33,10 +33,14 @@ use crate::{
     types::{AgentInfo, Condition, Listing, SearchEvent, SearchPlan, SearchRequest},
 };
 
-/// Uma etapa mais leve volta a ser testada depois deste tempo.
-const RETRY_LIGHTER_AFTER: u64 = 7 * 24 * 3600;
+/// Uma etapa mais leve volta a ser testada depois deste tempo. Um bloqueio
+/// passageiro não deixa a loja numa etapa mais cara por muito tempo.
+const RETRY_LIGHTER_AFTER: u64 = 24 * 3600;
 /// Cards por loja que vão para o filtro da IA.
 const MAX_CANDIDATES: usize = 40;
+/// Cards lidos por página de resultados (a OLX mostra 50). Ler é barato; o
+/// limite de custo é `MAX_CANDIDATES`.
+const MAX_PER_PAGE: usize = 60;
 /// Anúncios abertos para conferir detalhes, por lote.
 const MAX_CHECKS: usize = 6;
 /// O mesmo, na busca profunda (plano com termos amplos): anúncios genéricos
@@ -294,8 +298,8 @@ impl Engine {
                 }
             }
             let cards = match site.api {
-                Some(Api::Vtex) => parse::cards_from_vtex(&page.body, MAX_CANDIDATES),
-                None => parse::cards_from_html(&page.body, &page.url, MAX_CANDIDATES, Some(site.json_url.as_str()).filter(|j| !j.is_empty())),
+                Some(Api::Vtex) => parse::cards_from_vtex(&page.body, MAX_PER_PAGE),
+                None => parse::cards_from_html(&page.body, &page.url, MAX_PER_PAGE, Some(site.json_url.as_str()).filter(|j| !j.is_empty())),
             };
             queue.after(&term, retry, &ctx.plan.product, &cards);
             if cards.is_empty() {
@@ -369,11 +373,11 @@ impl Engine {
             if !msg.starts_with("Página aberta") {
                 bail!("{}", msg.lines().next().unwrap_or_default());
             }
-            let mut cards = lease.extract_cards(MAX_CANDIDATES).await?;
+            let mut cards = lease.extract_cards(MAX_PER_PAGE).await?;
             if cards.len() < 8 {
                 // Rolagem infinita (ex.: Marketplace) carrega mais cards.
                 lease.scroll(true).await?;
-                let more = lease.extract_cards(MAX_CANDIDATES).await?;
+                let more = lease.extract_cards(MAX_PER_PAGE).await?;
                 if more.len() > cards.len() {
                     cards = more;
                 }
@@ -751,12 +755,13 @@ mod tests {
         let paths = Paths { config_file: tmp.join("settings.json"), profile_dir: tmp.join("profile"), work_dir: tmp.join("agents") };
         let engine = Engine::with_paths(paths).await.unwrap();
         let settings = engine.settings();
-        let plan = SearchPlan {
+        // SNIPR_TEST_PLAN='{"product":"console","alternatives":["PlayStation 5","PS5"],"search_terms":["playstation 5","ps5"]}'
+        let plan = std::env::var("SNIPR_TEST_PLAN").ok().and_then(|p| serde_json::from_str(&p).ok()).unwrap_or_else(|| SearchPlan {
             product: "cadeira".into(),
             alternatives: vec!["ThunderX3 Core XXL".into(), "DT3 Royce".into(), "XT Office X-Pro".into(), "DT3 Forst".into()],
             search_terms: vec!["cadeira ThunderX3 Core XXL".into(), "cadeira DT3 Royce".into(), "cadeira XT Office X-Pro".into(), "cadeira DT3 Forst".into()],
             ..Default::default()
-        };
+        });
         let only = std::env::var("SNIPR_TEST_SITES").unwrap_or_default();
         let sites: Vec<Site> = settings.all_sites().into_iter().filter(|s| settings.enabled_sites.contains(&s.id)).filter(|s| only.is_empty() || only.split(',').any(|o| s.id == o)).collect();
         let (tx, mut rx) = mpsc::unbounded_channel();

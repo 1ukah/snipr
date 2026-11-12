@@ -276,6 +276,19 @@ pub const EXPAND_TARGETS: &str = r#"
 }
 "#;
 
+/// `content-visibility: auto` (ex.: OLX) deixa os cards fora da tela sem
+/// render: `innerText` volta vazio e o card some da leitura. Este script
+/// renderiza esses elementos antes da leitura.
+pub const SHOW_LAZY: &str = r#"
+(() => {
+  let n = 0;
+  for (const e of document.body.querySelectorAll('*')) {
+    if (getComputedStyle(e).contentVisibility === 'auto') { e.style.contentVisibility = 'visible'; n++; }
+  }
+  return n;
+})()
+"#;
+
 pub const READ_TEXT: &str = r#"
 (max) => {
   const m = document.querySelector('main, [role=main], #main, #content') || document.body;
