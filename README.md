@@ -98,6 +98,24 @@ termos de busca. O plano aparece na interface e guia a busca.
    segunda chamada.
 4. **Agent**, só para lojas sem busca conhecida: a IA opera o Chrome com
    ferramentas, registra anúncios pelo id do card e tem um limite de passos.
+5. **PIX, parcelas e cupons, sem IA.** O Snipr lê o texto do card e, nas
+   lojas das etapas A, B e C, a página dos 10 anúncios aceitos mais baratos
+   (`offers.rs`). As regras são as mesmas para todas as lojas: "10x de R$ 99
+   sem juros", "R$ 899 no Pix", "Cupom BORA5", "5% OFF", cashback. O
+   resultado mostra as colunas PIX, Cartão e Informação. Desligue em
+   **Ajustes > Resultados**.
+
+### Buscas automáticas
+
+A aba **Automáticas** repete uma busca nas lojas escolhidas, a cada X minutos
+(mínimo 5) ou todo dia num horário. O app precisa estar aberto. Uma execução
+perdida (app fechado) roda assim que o app abre.
+
+Para gastar poucos tokens, a primeira execução guarda o plano e os vereditos
+da IA. Nas seguintes, só os anúncios que a IA ainda não viu vão para o
+filtro: sem anúncios novos, a execução não usa a IA. Mudar a frase, a
+condição ou o preço máximo apaga o que foi guardado. As buscas automáticas
+rodam uma por vez, e o botão de parar da busca manual não as interrompe.
 
 ### Verificação de lojas
 
@@ -216,5 +234,8 @@ Arquivos do app em execução:
 | O quê | Windows | Onde fica |
 |---|---|---|
 | Ajustes | `%APPDATA%\snipr\settings.json` | `dirs::config_dir()/snipr` |
+| Histórico (uma linha JSON por busca, se ligado em Ajustes) | `%APPDATA%\snipr\history\manual.jsonl` e `auto.jsonl` | idem |
+| Buscas automáticas | `%APPDATA%\snipr\schedules.json`; última execução e vereditos em `auto\` | idem |
+| Anúncios abertos | `%APPDATA%\snipr\visited.json` | idem |
 | Perfil do Chrome | `%LOCALAPPDATA%\snipr\chrome-profile` | `dirs::data_local_dir()/snipr` |
 | Log de crash | `%LOCALAPPDATA%\snipr\crash.log` | idem |

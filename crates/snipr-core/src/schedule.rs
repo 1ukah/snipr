@@ -384,6 +384,10 @@ impl Engine {
             {
                 let mut list = me.auto.list.lock();
                 if let Some(s) = list.iter_mut().find(|s| s.id == id) {
+                    // Uma execução com erro também conta: sem isso, o Snipr tentaria de novo a cada 20 s.
+                    if error.is_some() {
+                        s.last_run = Some(unix_now());
+                    }
                     s.last_error = error;
                 }
             }
@@ -421,8 +425,13 @@ impl Engine {
             }
         }
         let r = done_rx.await.map_err(|_| anyhow!("a busca parou"))?;
+        // Parada pelo usuário: o resultado anterior continua valendo, e a
+        // próxima execução segue o intervalo normal.
         if r.cancelled {
-            bail!("Busca cancelada.");
+            if let Some(x) = self.auto.list.lock().iter_mut().find(|x| x.id == id) {
+                x.last_run = Some(unix_now());
+            }
+            return Ok(());
         }
 
         let prev = self.schedule_results(id);
@@ -485,6 +494,57 @@ mod tests {
         assert!(next > now + 20 * 3600 && next < now + 22 * 3600, "amanhã às 9h");
         s.enabled = false;
         assert_eq!(next_run(&s, now), None);
+    }
+
+    /// Roda uma busca automática duas vezes com os ajustes reais (usa a IA).
+    /// A segunda execução reusa o plano e os vereditos:
+    ///   SNIPR_TEST_SETTINGS=<settings.json> SNIPR_TEST_SITES=olx cargo test -p snipr-core --release automatica_reusa -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn automatica_reusa_plano_e_vereditos() {
+        let tmp = std::env::temp_dir().join("snipr-auto-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::copy(std::env::var("SNIPR_TEST_SETTINGS").unwrap(), tmp.join("settings.json")).unwrap();
+        let paths = crate::config::Paths { config_file: tmp.join("settings.json"), profile_dir: tmp.join("profile"), work_dir: tmp.join("agents") };
+        let engine = Engine::with_paths(paths).await.unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        engine.start_scheduler(tx);
+        let sites: Vec<String> = std::env::var("SNIPR_TEST_SITES").unwrap_or_else(|_| "olx".into()).split(',').map(String::from).collect();
+        let query = std::env::var("SNIPR_TEST_QUERY").unwrap_or_else(|_| "playstation 5".into());
+        let s = engine.save_schedule(Schedule { query, sites, every: Every::Interval { minutes: 600 }, ..Default::default() }).unwrap();
+        for round in 1..=2 {
+            if round == 2 {
+                engine.run_schedule(&s.id).unwrap();
+            }
+            let started = std::time::Instant::now();
+            let (mut tokens, mut calls) = (0, 0);
+            loop {
+                match rx.recv().await.unwrap() {
+                    ScheduleEvent::Usage { usage } => {
+                        calls += 1;
+                        tokens += usage.input_tokens + usage.output_tokens;
+                    }
+                    ScheduleEvent::Changed { schedule } if !schedule.running && schedule.last_run.is_some() => {
+                        println!(
+                            "execução {round}: {} resultados, {} novos, erro {:?}, {calls} chamadas à IA, {tokens} tokens, {:.0}s",
+                            schedule.last_total,
+                            schedule.last_new,
+                            schedule.last_error,
+                            started.elapsed().as_secs_f64()
+                        );
+                        assert!(schedule.plan.is_some(), "guarda o plano");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let r = engine.schedule_results(&s.id);
+            for l in r.listings.iter().take(8) {
+                println!("  R$ {:>8.2} cartão {:?} {:?}x {:?} {}", l.price, l.card_price, l.installments, l.offers, l.title.chars().take(60).collect::<String>());
+            }
+        }
+        engine.shutdown().await;
     }
 
     #[test]

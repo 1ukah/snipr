@@ -232,6 +232,17 @@ mod tests {
         println!("HTTP {} · {} caracteres\n{:?}", page.status, text.len(), read(&text, true));
     }
 
+    /// Mostra o que o Snipr lê de cada card de uma página de resultados salva:
+    ///   SNIPR_TEST_HTML=<arquivo> SNIPR_TEST_URL=<url da busca> cargo test -p snipr-core le_cards_salvos -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn le_cards_salvos() {
+        let html = std::fs::read_to_string(std::env::var("SNIPR_TEST_HTML").unwrap()).unwrap();
+        for c in crate::parse::cards_from_html(&html, &std::env::var("SNIPR_TEST_URL").unwrap(), 60, None) {
+            println!("{:?}\n  {}\n", read(&c.text, false), c.text);
+        }
+    }
+
     #[test]
     fn aplica_no_anuncio() {
         let mut l: Listing = serde_json::from_value(serde_json::json!({
