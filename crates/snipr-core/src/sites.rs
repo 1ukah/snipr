@@ -229,7 +229,7 @@ pub fn default_sites() -> Vec<Site> {
         ),
         site(
             "pichau", "Pichau", "pichau.com.br",
-            "https://www.pichau.com.br/search?q={q}", "novos", false, None, Stage::B,
+            "https://www.pichau.com.br/search?q={q}", "novos", false, None, Stage::D,
             "Loja de novos. Preço à vista (PIX) em destaque. Ignore produtos esgotados.",
         ),
         site(
@@ -262,9 +262,6 @@ pub fn default_enabled() -> Vec<String> {
 pub fn suggestions() -> Vec<Suggestion> {
     [
         ("Americanas", "https://www.americanas.com.br/"),
-        ("Casas Bahia", "https://www.casasbahia.com.br/"),
-        ("Ponto", "https://www.pontofrio.com.br/"),
-        ("Extra", "https://www.extra.com.br/"),
         ("Carrefour", "https://www.carrefour.com.br/"),
         ("AliExpress", "https://pt.aliexpress.com/"),
         ("Pernambucanas", "https://www.pernambucanas.com.br/"),

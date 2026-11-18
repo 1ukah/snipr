@@ -20,6 +20,18 @@ max_steps: number, idle_close_secs: number, chrome_path: string, enabled_sites: 
  */
 site_stages: { [key in string]?: StageInfo }, 
 /**
+ * Lê por HTTP a página dos anúncios aceitos para achar PIX, parcelas e cupons.
+ */
+offer_details: boolean, 
+/**
+ * Grava o resultado de cada busca manual em `history/manual.jsonl`.
+ */
+history_manual: boolean, 
+/**
+ * Grava o resultado de cada busca automática em `history/auto.jsonl`.
+ */
+history_auto: boolean, 
+/**
  * Formato do arquivo de ajustes (para migrar valores antigos).
  */
 version: number, };

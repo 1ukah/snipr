@@ -22,7 +22,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     config::SessionState,
-    parse,
+    offers, parse,
     sites::Site,
     types::{Condition, ConditionFilter, HumanKind, Listing, SearchEvent, Usage},
 };
@@ -107,12 +107,22 @@ impl Sink {
         let _ = self.events.send(SearchEvent::Listing { job: self.job.clone(), agent: agent.to_string(), listing: Box::new(l) });
         Ok(true)
     }
+
+    /// Troca um anúncio já registrado (mesmo `id`) pela versão completada.
+    pub fn update(&self, agent: &str, l: Listing) {
+        {
+            let mut all = self.listings.lock();
+            let Some(x) = all.iter_mut().find(|x| x.id == l.id) else { return };
+            *x = l.clone();
+        }
+        let _ = self.events.send(SearchEvent::Updated { job: self.job.clone(), agent: agent.to_string(), listing: Box::new(l) });
+    }
 }
 
 /// Monta o anúncio a partir de um card. `price` = preço escolhido.
 pub fn listing_from_card(site: &Site, card: &Card, price: f64, condition: Condition, fallback_url: &str) -> Listing {
     let original = card.old.iter().filter_map(|p| parse::parse_brl(p)).fold(0.0f64, f64::max);
-    Listing {
+    let mut l = Listing {
         id: uuid::Uuid::new_v4().to_string(),
         site_id: site.id.clone(),
         site_name: site.name.clone(),
@@ -127,7 +137,13 @@ pub fn listing_from_card(site: &Site, card: &Card, price: f64, condition: Condit
         notes: None,
         original_price: Some(original).filter(|o| *o > price),
         international: card.intl,
-    }
+        card_price: None,
+        installments: None,
+        interest_free: false,
+        offers: Vec::new(),
+    };
+    offers::apply(&mut l, &offers::read(&card.text, false));
+    l
 }
 
 pub struct ToolBox {

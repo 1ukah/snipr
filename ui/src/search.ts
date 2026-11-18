@@ -1,19 +1,16 @@
 import { api } from './api';
-import type { ConditionFilter } from './bindings/ConditionFilter';
 import type { SearchEvent } from './bindings/SearchEvent';
 import type { SearchPlan } from './bindings/SearchPlan';
 import type { SearchRequest } from './bindings/SearchRequest';
-import { $, $$, el, errText, fold, icon, toast } from './dom';
+import { $, $$, check, el, errText, fold, icon, toast } from './dom';
 import { addUsage, countSearch, renderFooter } from './footer';
-import { closePop, togglePop } from './popover';
-import { type Cond, saveSettings, siteById, state } from './state';
+import { closePop } from './popover';
+import { type Cond, condFilter, condsOf, saveSettings, siteById, state } from './state';
+import { paintAgents } from './progress';
+import { columns, hasInfo, listingRow } from './rows';
+import { storePicker } from './storepick';
 import { t } from './strings';
 
-const condFilter = (c: Iterable<Cond>): ConditionFilter => {
-  const s = new Set(c);
-  return s.has('new') && s.has('used') ? 'any' : s.has('used') ? 'used' : s.has('new') ? 'new' : 'any';
-};
-const condsOf = (f: ConditionFilter): Cond[] => (f === 'any' ? ['new', 'used'] : [f]);
 const isRunning = () => state.running.size > 0;
 const searched = () => state.searchedSites.size > 0 || state.listings.length > 0;
 
@@ -33,10 +30,6 @@ const inText = (l: { title: string; site_name: string }) => {
 
 function visible() {
   return state.listings.filter((l) => inIntl(l) && inText(l) && inPrice(l.price) && inCond(l.condition) && inSite(l.site_id)).sort((a, b) => a.price - b.price);
-}
-
-function check(on: boolean, onclick: () => void, kids: (Node | string | null)[]) {
-  return el('button', { type: 'button', class: 'ck', role: 'checkbox', 'aria-checked': String(on), onclick }, el('span', { class: 'box' }, icon('i-check')), ...kids);
 }
 
 function persistFilters() {
@@ -77,100 +70,24 @@ function renderOrigin() {
   );
 }
 
-let storeQ = '';
-let storeList: HTMLElement | null = null;
-
-function storesSummary() {
-  const n = state.selected.size;
-  const total = state.sites.length;
-  if (n === total) return t.allStores;
-  if (n === 0) return t.noStore;
-  if (n === 1) return siteById([...state.selected][0])?.name ?? '';
-  return t.storesCount(n, total);
-}
-
-function paintStoreList() {
-  if (!storeList) return;
-  const base = state.listings.filter((l) => inIntl(l) && inText(l) && inPrice(l.price) && inCond(l.condition));
-  const q = fold(storeQ.trim());
-  const shown = state.sites.filter((s) => fold(s.name).includes(q) || fold(s.domain).includes(q));
-  storeList.replaceChildren(
-    ...(shown.length
-      ? shown.map((s) =>
-          check(
-            state.selected.has(s.id),
-            () => {
-              if (state.selected.has(s.id)) state.selected.delete(s.id);
-              else state.selected.add(s.id);
-              persistFilters();
-              render();
-            },
-            [
-              el('span', { class: 'nm', title: s.name }, s.name, s.requires_login ? el('small', { text: t.requiresLogin }) : null),
-              el('span', { class: 'n', text: state.searchedSites.has(s.id) ? base.filter((l) => l.site_id === s.id).length : '' }),
-            ],
-          ),
-        )
-      : [el('div', { class: 'none', text: t.noStoreFound })]),
-  );
-}
-
-function buildStores(pop: HTMLElement) {
-  const find = el('input', {
-    type: 'text',
-    placeholder: t.findStore,
-    'aria-label': t.findStore,
-    value: storeQ,
-    spellcheck: 'false',
-    oninput: (e: Event) => {
-      storeQ = (e.target as HTMLInputElement).value;
-      paintStoreList();
-    },
-  });
-  storeList = el('div');
-  pop.append(
-    el('label', { class: 'find' }, icon('i-search'), find),
-    el(
-      'div',
-      { class: 'hd' },
-      el('button', {
-        type: 'button',
-        text: t.selectAll,
-        onclick: () => {
-          state.selected = new Set(state.sites.map((s) => s.id));
-          persistFilters();
-          render();
-        },
-      }),
-      el('button', {
-        type: 'button',
-        text: t.restoreDefault,
-        onclick: () => {
-          state.selected = new Set(state.sites.filter((s) => !s.requires_login && !['olx', 'enjoei'].includes(s.id)).map((s) => s.id));
-          persistFilters();
-          render();
-        },
-      }),
-    ),
-    storeList,
-  );
-  paintStoreList();
-}
+let stores: ReturnType<typeof storePicker> | null = null;
 
 function renderStores() {
-  const box = $('#stores');
-  let btn = box.querySelector<HTMLButtonElement>(':scope > button');
-  if (!btn) {
-    btn = el('button', { type: 'button', 'aria-haspopup': 'listbox', 'aria-expanded': 'false' });
-    const b = btn;
-    b.addEventListener('click', (e) => {
-      e.stopPropagation();
-      togglePop(box, b, buildStores, true);
-    });
-    box.append(b);
-  }
-  btn.replaceChildren(el('span', { class: 'val', text: storesSummary() }), icon('i-down'));
-  if (box.classList.contains('open')) paintStoreList();
+  stores ??= storePicker($('#stores'), {
+    selected: () => state.selected,
+    onChange: (next) => {
+      state.selected = next;
+      persistFilters();
+      render();
+    },
+    counts: () => {
+      const out: Record<string, number> = {};
+      for (const id of state.searchedSites) out[id] = 0;
+      for (const l of state.listings) if (l.site_id in out && inIntl(l) && inText(l) && inPrice(l.price) && inCond(l.condition)) out[l.site_id]++;
+      return out;
+    },
+  });
+  stores.paint();
 }
 
 function bounds(): [number, number] {
@@ -286,57 +203,19 @@ function renderMore() {
   );
 }
 
-const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-function price(v: number, original?: number) {
-  const c = Math.round((v % 1) * 100);
-  const was =
-    original && original > v
-      ? el(
-          'span',
-          { class: 'was', role: 'tooltip' },
-          el('s', { text: brl(original) }),
-          el('span', { class: 'off', text: `-${Math.round((1 - v / original) * 100)}%` }),
-        )
-      : null;
-  return el(
-    'span',
-    { class: 'price' + (was ? ' has-was' : ''), 'aria-label': was ? `${brl(v)}. ${t.wasPrice}: ${brl(original!)}` : brl(v) },
-    el('span', { class: 'cur', text: 'R$' }),
-    el('span', { class: 'int', text: Math.floor(v).toLocaleString('pt-BR') }),
-    el('span', { class: 'ct', text: ',' + String(c).padStart(2, '0') }),
-    was,
-  );
-}
-
-function openListing(url: string) {
-  if (!/^https?:\/\//i.test(url)) return;
-  api.openUrl(url).catch((e) => toast(errText(e)));
-}
-
 function renderList() {
   const all = visible();
   const bn = all.find((l) => l.condition === 'new');
   const bu = all.find((l) => l.condition === 'used');
+  const info = hasInfo(all);
   $('#list').replaceChildren(
     ...all.map((l) => {
-      const li = el(
-        'li',
-        { class: 'row' + (l === bn || l === bu ? ' best' : '') + (l.fresh ? ' fresh' : '') },
-        el('span', { class: 'dot ' + (l.condition === 'used' ? 'u' : 'f'), title: l.condition === 'used' ? t.used : t.new }),
-        price(l.price, l.original_price),
-        el(
-          'div',
-          { class: 't' },
-          el('div', { class: 'ti' }, el('span', { class: 'tt', text: l.title, title: l.title }), l.international ? el('span', { class: 'intl', text: t.intlBadge, title: t.intlTip }) : null),
-          el('div', { class: 'sub', text: l.site_name }),
-        ),
-        el('button', { class: 'dest', title: t.openListing(l.site_name), onclick: () => openListing(l.url) }, icon('i-out'), el('span', { text: l.site_name })),
-      );
+      const li = listingRow(l, { best: l === bn || l === bu, fresh: l.fresh, info });
       l.fresh = false;
       return li;
     }),
   );
+  $('#cols').replaceChildren(...(all.length ? [columns(info)] : []));
   const n = all.length;
   $('#count').textContent = t.results(n) + (state.elapsed ? ` · ${state.elapsed}` : '');
   $('#rh').hidden = !searched() && !isRunning();
@@ -344,25 +223,8 @@ function renderList() {
 }
 
 function renderAgents() {
-  const box = $('#agents');
-  const list = [...state.agents.values()];
   $('#t-progress').setAttribute('aria-checked', String(state.progress));
-  box.hidden = !state.progress || !list.length;
-  if (box.hidden) return;
-  const done = list.filter((a) => a.st === 'ok' || a.st === 'fail').length;
-  box.replaceChildren(
-    el('div', { class: 'fl' }, icon('i-pulse'), el('span', { text: t.progress }), el('span', { class: 'n', text: `${done}/${list.length}` })),
-    ...list.map((a) =>
-      el(
-        'div',
-        { class: 'agent ' + a.st },
-        el('span', { class: 'nm', text: a.label }),
-        el('span', { class: 'trk' }, el('i', { style: `width:${a.pct}%` })),
-        el('span', { class: 'm', text: a.msg, title: a.msg }),
-        el('span', { class: 'st' }, a.st === 'ok' ? icon('i-check') : a.st === 'fail' ? icon('i-x') : null),
-      ),
-    ),
-  );
+  paintAgents($('#agents'), [...state.agents.values()], state.progress);
 }
 
 function renderHuman() {
@@ -525,6 +387,14 @@ function onEvent(ev: SearchEvent) {
       state.keys.add(key);
       state.listings.push({ ...l, fresh: true });
       render();
+      break;
+    }
+    case 'updated': {
+      const i = state.listings.findIndex((x) => x.id === ev.listing.id);
+      if (i >= 0) {
+        state.listings[i] = ev.listing;
+        render();
+      }
       break;
     }
     case 'needs_human': {

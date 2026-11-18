@@ -178,6 +178,12 @@ pub struct Settings {
     pub login_overrides: HashMap<String, bool>,
     /// Etapa verificada de cada loja (padrão ou personalizada).
     pub site_stages: HashMap<String, StageInfo>,
+    /// Lê por HTTP a página dos anúncios aceitos para achar PIX, parcelas e cupons.
+    pub offer_details: bool,
+    /// Grava o resultado de cada busca manual em `history/manual.jsonl`.
+    pub history_manual: bool,
+    /// Grava o resultado de cada busca automática em `history/auto.jsonl`.
+    pub history_auto: bool,
     /// Formato do arquivo de ajustes (para migrar valores antigos).
     pub version: u32,
 }
@@ -204,6 +210,9 @@ impl Default for Settings {
             sessions: HashMap::new(),
             login_overrides: HashMap::new(),
             site_stages: HashMap::new(),
+            offer_details: true,
+            history_manual: false,
+            history_auto: true,
             version: 2,
         }
     }
@@ -255,6 +264,11 @@ impl Paths {
             profile_dir: data_dir.join("chrome-profile"),
             work_dir: data_dir.join("agents"),
         })
+    }
+
+    /// Pasta dos ajustes: também guarda o histórico e as buscas automáticas.
+    pub fn dir(&self) -> PathBuf {
+        self.config_file.parent().map(PathBuf::from).unwrap_or_default()
     }
 
     pub fn load_settings(&self) -> Settings {

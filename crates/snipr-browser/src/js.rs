@@ -212,7 +212,7 @@ pub const EXTRACT_LISTINGS: &str = r#"
     // Sem preço, ou só R$ 0,00 (ex.: mini-carrinho do cabeçalho): não é anúncio.
     if (!prices.length || prices.every((p) => /^R\$ 0(,00)?$/.test(p))) continue;
     const extra = text.replace(title, '').replace(PRICE, ' ').replace(/\s+/g, ' ').trim().slice(0, 170);
-    cards.push({ title: title.slice(0, 160), prices, old, url, extra, intl: isIntl(box) });
+    cards.push({ title: title.slice(0, 160), prices, old, url, extra, intl: isIntl(box), text: text.slice(0, 600) });
   }
   // 3) Fallback: há preços, mas nenhum card expõe link próprio (ex.: Shopee usa
   //    cliques via JS). Devolve os cards mesmo assim, marcados como "sem link".
@@ -234,7 +234,7 @@ pub const EXTRACT_LISTINGS: &str = r#"
       if (!title) continue;
       const pr = pricesOf(text);
       if (!pr.now.length || pr.now.every((p) => /^R\$ 0(,00)?$/.test(p))) continue;
-      cards.push({ title: title.slice(0, 160), prices: pr.now.slice(0, 4), old: pr.old.slice(0, 2), url: '', extra: text.replace(title, '').replace(PRICE, ' ').replace(/\s+/g, ' ').trim().slice(0, 120), intl: isIntl(box) });
+      cards.push({ title: title.slice(0, 160), prices: pr.now.slice(0, 4), old: pr.old.slice(0, 2), url: '', extra: text.replace(title, '').replace(PRICE, ' ').replace(/\s+/g, ' ').trim().slice(0, 120), intl: isIntl(box), text: text.slice(0, 600) });
     }
   }
   function isIntl(box) {
@@ -274,6 +274,19 @@ pub const EXPAND_TARGETS: &str = r#"
   }
   return out;
 }
+"#;
+
+/// `content-visibility: auto` (ex.: OLX) deixa os cards fora da tela sem
+/// render: `innerText` volta vazio e o card some da leitura. Este script
+/// renderiza esses elementos antes da leitura.
+pub const SHOW_LAZY: &str = r#"
+(() => {
+  let n = 0;
+  for (const e of document.body.querySelectorAll('*')) {
+    if (getComputedStyle(e).contentVisibility === 'auto') { e.style.contentVisibility = 'visible'; n++; }
+  }
+  return n;
+})()
 "#;
 
 pub const READ_TEXT: &str = r#"

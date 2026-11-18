@@ -44,10 +44,16 @@ pub struct SearchPlan {
     pub product: String,
     pub alternatives: Vec<String>,
     pub requirements: Vec<String>,
+    /// O que o usuário prefere, sem exigir ("de preferência X3D").
+    pub preferences: Vec<String>,
     pub exclude: Vec<String>,
     pub condition: Option<ConditionFilter>,
     pub max_price: Option<f64>,
     pub search_terms: Vec<String>,
+    /// Termos genéricos ("pc gamer") de anúncios que só citam as
+    /// especificações na descrição. Com eles, a busca é profunda: anúncios
+    /// genéricos têm a página lida.
+    pub broad_terms: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -93,6 +99,18 @@ pub struct Listing {
     pub original_price: Option<f64>,
     #[serde(default)]
     pub international: bool,
+    /// Total no cartão (parcelado). `price` é o preço à vista ou no PIX.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub card_price: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub installments: Option<u32>,
+    #[serde(default)]
+    pub interest_free: bool,
+    /// Cupons, cashback e descontos no PIX ("Cupom BORA5 (5% OFF)").
+    #[serde(default)]
+    pub offers: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -113,6 +131,8 @@ pub enum SearchEvent {
     Planned { job: String, plan: SearchPlan },
     Log { job: String, agent: String, message: String },
     Listing { job: String, agent: String, listing: Box<Listing> },
+    /// Um anúncio já enviado ganhou dados (PIX, parcelas, cupons). Mesmo `id`.
+    Updated { job: String, agent: String, listing: Box<Listing> },
     NeedsHuman { job: String, agent: String, site: Option<String>, kind: HumanKind, reason: String },
     HumanResolved { job: String, agent: String },
     AgentFinished { job: String, agent: String, ok: bool, summary: String },

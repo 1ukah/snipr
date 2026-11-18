@@ -1,4 +1,5 @@
 import { api } from './api';
+import type { ConditionFilter } from './bindings/ConditionFilter';
 import type { HumanKind } from './bindings/HumanKind';
 import type { Listing } from './bindings/Listing';
 import type { SearchPlan } from './bindings/SearchPlan';
@@ -8,6 +9,12 @@ import type { Suggestion } from './bindings/Suggestion';
 import { errText, toast } from './dom';
 
 export type Cond = 'new' | 'used';
+
+export const condFilter = (c: Iterable<Cond>): ConditionFilter => {
+  const s = new Set(c);
+  return s.has('new') && s.has('used') ? 'any' : s.has('used') ? 'used' : s.has('new') ? 'new' : 'any';
+};
+export const condsOf = (f: ConditionFilter): Cond[] => (f === 'any' ? ['new', 'used'] : [f]);
 
 export interface AgentView {
   job: string;
@@ -55,7 +62,13 @@ export const state = {
   elapsed: null as string | null,
   progress: false,
   showIntl: false,
+  /** Opened listing links (linkKey). */
+  visited: new Set<string>(),
+  tab: 'search' as 'search' | 'auto',
 };
+
+/** Same rule as `history::link_key` in the core. */
+export const linkKey = (url: string) => url.split(/[?#]/)[0].replace(/\/+$/, '').toLowerCase();
 
 export const siteById = (id: string) => state.sites.find((s) => s.id === id);
 

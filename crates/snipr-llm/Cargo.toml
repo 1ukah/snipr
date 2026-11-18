@@ -2,6 +2,8 @@
 name = "snipr-llm"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Provedores de modelo (Anthropic, OpenAI-compatível) atrás de uma interface única"
 
 [dependencies]

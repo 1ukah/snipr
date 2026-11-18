@@ -5,8 +5,9 @@ import '@fontsource/hanken-grotesk/700.css';
 import './styles.css';
 import { finishLogin, renderAccounts } from './accounts';
 import { api } from './api';
+import { initAuto, openAuto } from './auto';
 import { $, $$, errText, toast, translate } from './dom';
-import { initFooter } from './footer';
+import { initFooter, renderFooter } from './footer';
 import { closePop, isPopOpen } from './popover';
 import { initSearch, render } from './search';
 import { initSettings, renderSettings } from './settings';
@@ -27,10 +28,24 @@ function closePanels() {
   $$('.sheet, .modal').forEach((x) => (x.hidden = true));
   $('#side').classList.remove('open');
   $('#scrim').hidden = true;
-  render();
+  if (state.tab === 'auto') openAuto();
+  else render();
+}
+
+function setTab(tab: 'search' | 'auto') {
+  closePop();
+  state.tab = tab;
+  $('#app').classList.toggle('tab-auto', tab === 'auto');
+  $('#search-view').hidden = tab !== 'search';
+  $('#auto-view').hidden = tab !== 'auto';
+  $$('#tabs [role=tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+  if (tab === 'auto') openAuto();
+  else render();
+  renderFooter();
 }
 
 function wire() {
+  $$('#tabs [role=tab]').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab as 'search' | 'auto')));
   $('#o-settings').addEventListener('click', () => {
     renderSettings();
     openPanel('settings');
@@ -78,7 +93,9 @@ async function boot() {
     state.cond = new Set(state.settings.conditions.filter((c): c is 'new' | 'used' => c === 'new' || c === 'used'));
     if (!state.cond.size) state.cond.add('new');
     state.showIntl = state.settings.show_international;
+    state.visited = new Set(await api.visited().catch(() => []));
     render();
+    initAuto();
     $('#q').focus();
     api
       .browserStatus()
