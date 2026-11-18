@@ -2,6 +2,8 @@
 name = "snipr-core"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Orquestrador de agentes, ferramentas, servidor MCP e configuração do Snipr"
 
 [dependencies]
