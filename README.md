@@ -1,5 +1,7 @@
 # Snipr
 
+![Tela de busca do Snipr](docs/screenshot.png)
+
 O Snipr é um caçador de preços com IA. Ele é um app desktop para Windows,
 macOS e Linux.
 
@@ -314,3 +316,7 @@ Estas ferramentas não usam a IA, exceto onde indicado.
 
 Use o Snipr de forma responsável. Obedeça aos termos de uso de cada loja e do
 provedor de IA.
+
+## Licença
+
+O Snipr usa a licença [GNU GPL v3](LICENSE).
