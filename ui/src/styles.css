@@ -193,6 +193,10 @@ svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor;
 .row .cc .x.free { color: var(--fg-2); }
 .row .cc.none { color: var(--fg-3); }
 .row .info { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.row.no-info .info, .cols.no-info span:nth-child(5) { display: none; }
+@container (min-width: 901px) {
+  .row.no-info, .cols.no-info { grid-template-columns: 12px 124px 150px minmax(200px, 1fr) minmax(96px, 150px); }
+}
 .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 1; padding: 4px 7px; border: 1px dashed var(--line-2); border-radius: 4px; color: var(--fg); }
 .row.seen > * { opacity: .45; }
 .row.seen:hover > * { opacity: .7; }

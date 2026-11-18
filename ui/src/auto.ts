@@ -6,7 +6,7 @@ import type { ScheduleResults } from './bindings/ScheduleResults';
 import { $, check, el, errText, icon, toast } from './dom';
 import { addAutoUsage, autoRunFinished, autoRunStarted, bindAutoView, renderFooter } from './footer';
 import { segment } from './popover';
-import { columns, listingRow } from './rows';
+import { columns, hasInfo, listingRow } from './rows';
 import { paintAgents, trackAgents } from './progress';
 import { type AgentView, type Cond, condFilter, condsOf, siteById, state } from './state';
 import { storePicker } from './storepick';
@@ -260,8 +260,9 @@ function renderResults() {
   const bu = all.find((l) => l.condition === 'used');
   head.hidden = false;
   head.replaceChildren(el('span', { text: t.results(all.length) + (fresh.size ? ` · ${t.recentCount(fresh.size)}` : '') + ` · ${clock(results.at)}` }));
-  cols.replaceChildren(...(all.length ? [columns()] : []));
-  box.replaceChildren(...all.map((l) => listingRow(l, { best: l === bn || l === bu, recent: fresh.has(l.id) })));
+  const info = hasInfo(all);
+  cols.replaceChildren(...(all.length ? [columns(info)] : []));
+  box.replaceChildren(...all.map((l) => listingRow(l, { best: l === bn || l === bu, recent: fresh.has(l.id), info })));
 }
 
 export function renderAuto() {

@@ -258,8 +258,7 @@ impl Engine {
                     .map_err(|_| anyhow!("filtro indisponível"))?;
                 let kept = result.await.map_err(|_| anyhow!("filtro interrompido"))?.map_err(|e| anyhow!(e))?;
                 let n = kept.len();
-                // Etapa D: abrir cada anúncio no Chrome custa caro; fica só o que o card mostra.
-                if stage != Stage::D && ctx.settings.offer_details {
+                if ctx.settings.offer_details {
                     self.enrich(ctx, site, agent, stage, kept).await;
                 }
                 Ok(format!("{n} anúncio(s) · etapa {}", stage.label()))
@@ -617,7 +616,14 @@ impl Engine {
             return;
         }
         ctx.sink.log(agent, format!("lendo parcelas e cupons de {} anúncio(s)", kept.len()));
-        let cookie = if stage == Stage::C { self.fetcher.cookie(&site.id) } else { None };
+        // Etapa D: abrir cada anúncio no Chrome custa caro, mas a página do
+        // anúncio costuma abrir por HTTP mesmo quando a busca não abre.
+        let cookie = if matches!(stage, Stage::C | Stage::D) { self.fetcher.cookie(&site.id) } else { None };
+        let stage = match stage {
+            Stage::D if cookie.is_some() => Stage::C,
+            Stage::D => Stage::B,
+            s => s,
+        };
         let fails = std::sync::atomic::AtomicUsize::new(0);
         let work = futures_util::stream::iter(kept).for_each_concurrent(3, |mut l| {
             let (cookie, fails) = (cookie.as_deref(), &fails);

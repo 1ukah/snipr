@@ -47,10 +47,13 @@ function openListing(l: Listing, row: HTMLElement) {
   api.markVisited(l.url).catch(() => {});
 }
 
-export function columns() {
+/** True when some listing has offers to show in the Information column. */
+export const hasInfo = (all: Listing[]) => all.some((l) => l.offers.length > 0);
+
+export function columns(info = true) {
   return el(
     'div',
-    { class: 'cols', 'aria-hidden': 'true' },
+    { class: 'cols' + (info ? '' : ' no-info'), 'aria-hidden': 'true' },
     el('span'),
     el('span', { text: t.colPix }),
     el('span', { text: t.colCard }),
@@ -65,12 +68,14 @@ export interface RowFlags {
   fresh?: boolean;
   /** Not in the previous run of an automatic search. */
   recent?: boolean;
+  /** The Information column is shown (some listing in the list has offers). */
+  info?: boolean;
 }
 
 /** One result row. The whole row opens the listing. */
 export function listingRow(l: Listing, f: RowFlags = {}) {
   const seen = state.visited.has(linkKey(l.url));
-  const cls = ['row', f.best && 'best', f.fresh && 'fresh', seen && 'seen', f.recent && 'recent'].filter(Boolean).join(' ');
+  const cls = ['row', f.best && 'best', f.fresh && 'fresh', seen && 'seen', f.recent && 'recent', f.info === false && 'no-info'].filter(Boolean).join(' ');
   const row: HTMLLIElement = el(
     'li',
     {

@@ -7,7 +7,7 @@ import { addUsage, countSearch, renderFooter } from './footer';
 import { closePop } from './popover';
 import { type Cond, condFilter, condsOf, saveSettings, siteById, state } from './state';
 import { paintAgents } from './progress';
-import { columns, listingRow } from './rows';
+import { columns, hasInfo, listingRow } from './rows';
 import { storePicker } from './storepick';
 import { t } from './strings';
 
@@ -207,14 +207,15 @@ function renderList() {
   const all = visible();
   const bn = all.find((l) => l.condition === 'new');
   const bu = all.find((l) => l.condition === 'used');
+  const info = hasInfo(all);
   $('#list').replaceChildren(
     ...all.map((l) => {
-      const li = listingRow(l, { best: l === bn || l === bu, fresh: l.fresh });
+      const li = listingRow(l, { best: l === bn || l === bu, fresh: l.fresh, info });
       l.fresh = false;
       return li;
     }),
   );
-  $('#cols').replaceChildren(...(all.length ? [columns()] : []));
+  $('#cols').replaceChildren(...(all.length ? [columns(info)] : []));
   const n = all.length;
   $('#count').textContent = t.results(n) + (state.elapsed ? ` · ${state.elapsed}` : '');
   $('#rh').hidden = !searched() && !isRunning();
